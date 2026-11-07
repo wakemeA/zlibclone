@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 8 点间距体系 -->
+    <dimen name="space_4">4dp</dimen>
+    <dimen name="space_8">8dp</dimen>
+    <dimen name="space_12">12dp</dimen>
+    <dimen name="space_16">16dp</dimen>
+    <dimen name="space_20">20dp</dimen>
+    <dimen name="space_24">24dp</dimen>
+    <dimen name="space_32">32dp</dimen>
+    <dimen name="screen_margin">20dp</dimen>
+    <dimen name="radius_card">16dp</dimen>
+    <dimen name="radius_control">12dp</dimen>
+    <dimen name="radius_chip">8dp</dimen>
+    <dimen name="radius_pill">16dp</dimen>
+    <dimen name="touch_min">48dp</dimen>
+    <!-- 分类模块 -->
+    <dimen name="breadcrumb_height">48dp</dimen>
+    <dimen name="chip_touch_height">48dp</dimen>
+    <dimen name="chip_height">32dp</dimen>
+    <dimen name="chip_padding_h">14dp</dimen>
+    <dimen name="skeleton_row_height">60dp</dimen>
+    <dimen name="skeleton_card_height">220dp</dimen>
+    <dimen name="nav_height">64dp</dimen>
+    <dimen name="icon_nav">22dp</dimen>
+    <dimen name="icon_action">20dp</dimen>
+    <dimen name="cover_width_list">56dp</dimen>
+    <dimen name="cover_height_list">76dp</dimen>
+</resources>

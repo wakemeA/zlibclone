@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 书库网格卡片：3:4 封面（高度由 BookAdapter 按列宽计算）+ 两行书名 + 一行作者。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_card"
+    android:orientation="vertical"
+    android:padding="@dimen/space_8">
+
+    <ImageView
+        android:id="@+id/iv_card_cover"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:background="@drawable/bg_cover_placeholder"
+        android:clipToOutline="true"
+        android:contentDescription="@string/cover_desc"
+        android:scaleType="centerCrop" />
+
+    <TextView
+        android:id="@+id/tv_card_title"
+        style="@style/TextAppearance.ZL.Body"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_8"
+        android:ellipsize="end"
+        android:maxLines="2" />
+
+    <TextView
+        android:id="@+id/tv_card_author"
+        style="@style/TextAppearance.ZL.Caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_4"
+        android:ellipsize="end"
+        android:maxLines="1" />
+</LinearLayout>

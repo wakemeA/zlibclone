@@ -1,0 +1,336 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 分类页：固定高度面包屑 + 标题 + 语言筛选 + 分类列表/书单网格（双形态骨架/空/失败/加载与尾注）。
+     L0 一级分类目录：隐藏面包屑与标题，只保留副标题；
+     L1 二级分类列表 / L2 分类书单：显示 48dp 固定高度面包屑（‹ 全部分类 + / 一级分类）。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/ll_categories_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/paper"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/ll_cat_breadcrumb"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/breadcrumb_height"
+        android:layout_marginStart="@dimen/space_12"
+        android:layout_marginTop="@dimen/space_4"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/btn_cat_back_root"
+            style="@style/TextAppearance.ZL.Breadcrumb"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:contentDescription="@string/category_back_root_desc"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:minHeight="@dimen/touch_min"
+            android:paddingStart="@dimen/space_8"
+            android:paddingEnd="@dimen/space_8"
+            android:text="@string/category_back_root" />
+
+        <TextView
+            android:id="@+id/btn_cat_back_parent"
+            style="@style/TextAppearance.ZL.Breadcrumb"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:minHeight="@dimen/touch_min"
+            android:paddingStart="@dimen/space_8"
+            android:paddingEnd="@dimen/space_8"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tv_cat_title"
+        style="@style/TextAppearance.ZL.Section"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/screen_margin"
+        android:layout_marginTop="@dimen/space_4"
+        android:layout_marginEnd="@dimen/screen_margin"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:text="@string/category_root_title" />
+
+    <TextView
+        android:id="@+id/tv_cat_subtitle"
+        style="@style/TextAppearance.ZL.Caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/screen_margin"
+        android:layout_marginTop="@dimen/space_8"
+        android:layout_marginEnd="@dimen/screen_margin"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:text="@string/category_root_subtitle" />
+
+    <HorizontalScrollView
+        android:id="@+id/hsv_cat_languages"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_4"
+        android:clipToPadding="false"
+        android:gravity="center_vertical"
+        android:minHeight="@dimen/chip_touch_height"
+        android:paddingStart="@dimen/screen_margin"
+        android:paddingEnd="@dimen/screen_margin"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/ll_cat_languages"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:minHeight="@dimen/chip_touch_height"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
+
+    <FrameLayout
+        android:id="@+id/fl_cat_content"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="@dimen/space_8"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/lv_cat_categories"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:cacheColorHint="@color/transparent"
+            android:clipToPadding="false"
+            android:divider="@color/divider"
+            android:dividerHeight="1dp"
+            android:listSelector="@color/transparent"
+            android:paddingStart="@dimen/screen_margin"
+            android:paddingEnd="@dimen/screen_margin"
+            android:paddingBottom="@dimen/space_20"
+            android:scrollbars="none" />
+
+        <GridView
+            android:id="@+id/gv_cat_books"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:cacheColorHint="@color/transparent"
+            android:clipToPadding="false"
+            android:horizontalSpacing="@dimen/space_12"
+            android:listSelector="@color/transparent"
+            android:numColumns="2"
+            android:paddingStart="@dimen/screen_margin"
+            android:paddingEnd="@dimen/screen_margin"
+            android:paddingBottom="@dimen/space_20"
+            android:scrollbars="none"
+            android:stretchMode="columnWidth"
+            android:verticalSpacing="@dimen/space_12"
+            android:visibility="gone" />
+
+        <!-- 骨架：容器只负责整体显隐，内部按层级切换列表/网格两种形态。 -->
+        <LinearLayout
+            android:id="@+id/ll_cat_skeleton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/screen_margin"
+            android:layout_marginTop="@dimen/space_12"
+            android:layout_marginEnd="@dimen/screen_margin"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <!-- 列表骨架：L0 一级分类目录加载分类树时显示（4 条 60dp 横条）。 -->
+            <LinearLayout
+                android:id="@+id/ll_cat_skeleton_list"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/skeleton_row_height"
+                    android:background="@drawable/bg_skeleton" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/skeleton_row_height"
+                    android:layout_marginTop="@dimen/space_8"
+                    android:background="@drawable/bg_skeleton" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/skeleton_row_height"
+                    android:layout_marginTop="@dimen/space_8"
+                    android:background="@drawable/bg_skeleton" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/skeleton_row_height"
+                    android:layout_marginTop="@dimen/space_8"
+                    android:background="@drawable/bg_skeleton" />
+            </LinearLayout>
+
+            <!-- 网格骨架：L2 分类书单首次加载时显示（2 行 × 2 列，与书封网格同构）。 -->
+            <LinearLayout
+                android:id="@+id/ll_cat_skeleton_grid"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/skeleton_card_height"
+                    android:orientation="horizontal">
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_skeleton_card" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginStart="@dimen/space_12"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_skeleton_card" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/skeleton_card_height"
+                    android:layout_marginTop="@dimen/space_12"
+                    android:orientation="horizontal">
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_skeleton_card" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginStart="@dimen/space_12"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_skeleton_card" />
+                </LinearLayout>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 空态：当前分类/语言没有结果（与失败态区分；按钮由代码在「全部语言」/「刷新」间切换）。 -->
+        <LinearLayout
+            android:id="@+id/ll_cat_empty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="@dimen/space_32"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_book"
+                android:tint="@color/divider" />
+
+            <TextView
+                android:id="@+id/tv_cat_empty_title"
+                style="@style/TextAppearance.ZL.Section"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_16"
+                android:gravity="center"
+                android:text="@string/category_empty_title" />
+
+            <TextView
+                android:id="@+id/tv_cat_empty_desc"
+                style="@style/TextAppearance.ZL.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_8"
+                android:gravity="center"
+                android:text="@string/category_empty_desc" />
+
+            <TextView
+                android:id="@+id/btn_cat_empty_action"
+                style="@style/Widget.ZL.GhostButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:layout_marginTop="@dimen/space_24"
+                android:minWidth="120dp"
+                android:text="@string/category_empty_action" />
+        </LinearLayout>
+
+        <!-- 失败态：网络失败 / 需要过网页验证 / 解析失败 / 分类不存在，文案由代码区分。 -->
+        <LinearLayout
+            android:id="@+id/ll_cat_error"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="@dimen/space_32"
+            android:visibility="gone">
+
+            <ImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_refresh"
+                android:tint="@color/divider" />
+
+            <TextView
+                android:id="@+id/tv_cat_error_title"
+                style="@style/TextAppearance.ZL.Section"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_16"
+                android:gravity="center"
+                android:text="@string/category_error_title" />
+
+            <TextView
+                android:id="@+id/tv_cat_error_desc"
+                style="@style/TextAppearance.ZL.Caption"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_8"
+                android:gravity="center"
+                android:text="@string/category_error_network" />
+
+            <TextView
+                android:id="@+id/btn_cat_error_retry"
+                style="@style/Widget.ZL.GhostButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:layout_marginTop="@dimen/space_24"
+                android:minWidth="120dp"
+                android:text="@string/action_retry" />
+        </LinearLayout>
+
+        <!-- 底部提示：加载更多 / 切换语言中 / 分页结束（文案由代码切换）。 -->
+        <TextView
+            android:id="@+id/tv_cat_loading_more"
+            style="@style/TextAppearance.ZL.Caption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:gravity="center"
+            android:maxLines="2"
+            android:padding="@dimen/space_12"
+            android:text="@string/loading_more"
+            android:visibility="gone" />
+    </FrameLayout>
+</LinearLayout>

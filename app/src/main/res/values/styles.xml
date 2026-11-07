@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="TextAppearance.ZL.PageTitle" parent="@android:style/TextAppearance.Material">
+        <item name="android:textSize">26sp</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="TextAppearance.ZL.Section" parent="@android:style/TextAppearance.Material">
+        <item name="android:textSize">16sp</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+    <style name="TextAppearance.ZL.Body" parent="@android:style/TextAppearance.Material">
+        <item name="android:textSize">15sp</item>
+        <item name="android:textColor">@color/ink</item>
+    </style>
+    <style name="TextAppearance.ZL.BodySecondary" parent="@android:style/TextAppearance.Material">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/ink_secondary</item>
+    </style>
+    <style name="TextAppearance.ZL.Caption" parent="@android:style/TextAppearance.Material">
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/ink_secondary</item>
+    </style>
+    <!-- 分类面包屑：可点击的主色文字，字号/颜色统一走 token。 -->
+    <style name="TextAppearance.ZL.Breadcrumb" parent="@android:style/TextAppearance.Material">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/primary</item>
+    </style>
+    <!-- 语言筛选胶囊：文字颜色随选中态切换（选中主色 / 未选中次要墨色）。 -->
+    <style name="TextAppearance.ZL.Chip" parent="@android:style/TextAppearance.Material">
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/language_chip_text</item>
+    </style>
+    <style name="Widget.ZL.Card" parent="">
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:padding">@dimen/space_16</item>
+    </style>
+    <style name="Widget.ZL.PrimaryButton" parent="">
+        <item name="android:background">@drawable/bg_primary_button</item>
+        <item name="android:textColor">@color/on_primary</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:minHeight">@dimen/touch_min</item>
+        <item name="android:paddingStart">@dimen/space_20</item>
+        <item name="android:paddingEnd">@dimen/space_20</item>
+        <item name="android:gravity">center</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+    <style name="Widget.ZL.GhostButton" parent="">
+        <item name="android:background">@drawable/bg_ghost_button</item>
+        <item name="android:textColor">@color/primary</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:minHeight">@dimen/touch_min</item>
+        <item name="android:paddingStart">@dimen/space_20</item>
+        <item name="android:paddingEnd">@dimen/space_20</item>
+        <item name="android:gravity">center</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+    <style name="Widget.ZL.Segment" parent="@android:style/Widget.Material.Button.Borderless">
+        <item name="android:layout_height">36dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">@color/segment_text</item>
+        <item name="android:background">@drawable/bg_segment_selector</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:stateListAnimator">@null</item>
+    </style>
+    <style name="Widget.ZL.SettingRow" parent="">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">@dimen/touch_min</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+        <item name="android:paddingStart">@dimen/screen_margin</item>
+        <item name="android:paddingEnd">@dimen/screen_margin</item>
+    </style>
+</resources>

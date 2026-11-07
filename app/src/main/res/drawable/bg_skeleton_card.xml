@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 书单网格骨架卡片占位：分隔线色 + 与真实书卡一致的圆角。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/divider" />
+    <corners android:radius="@dimen/radius_card" />
+</shape>

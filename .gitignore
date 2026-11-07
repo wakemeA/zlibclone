@@ -1,0 +1,28 @@
+# Build output and local caches
+/build/
+.gradle/
+**/__pycache__/
+*.py[cod]
+*.class
+*.log
+
+# Android signing keys and local configuration
+*.jks
+*.keystore
+*.p12
+*.pfx
+local.properties
+.env
+.env.*
+!.env.example
+
+# Private credentials
+*.pem
+*.key
+
+# Editor and OS files
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

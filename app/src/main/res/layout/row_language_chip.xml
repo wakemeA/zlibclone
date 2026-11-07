@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 语言筛选 Chip：外层 48dp 触控热区 + 内层 32dp 视觉胶囊（触控热区达标）。 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="@dimen/chip_touch_height"
+    android:layout_marginEnd="@dimen/space_8"
+    android:background="?android:attr/selectableItemBackgroundBorderless"
+    android:clickable="true"
+    android:focusable="true">
+
+    <TextView
+        android:id="@+id/tv_language_chip"
+        style="@style/TextAppearance.ZL.Chip"
+        android:layout_width="wrap_content"
+        android:layout_height="@dimen/chip_height"
+        android:layout_gravity="center_vertical"
+        android:background="@drawable/bg_language_chip"
+        android:duplicateParentState="true"
+        android:gravity="center"
+        android:maxLines="1"
+        android:paddingStart="@dimen/chip_padding_h"
+        android:paddingEnd="@dimen/chip_padding_h" />
+</FrameLayout>

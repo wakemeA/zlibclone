@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 语言筛选胶囊背景：按 selected 状态切换选中/未选中形态。 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:drawable="@drawable/bg_language_chip_selected"
+        android:state_selected="true" />
+    <item android:drawable="@drawable/bg_language_chip_normal" />
+</selector>

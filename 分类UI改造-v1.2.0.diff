@@ -1,0 +1,1679 @@
+diff -ruN a/README.md b/README.md
+--- a/README.md	2026-11-07 12:01:26.265861024 +0800
++++ b/README.md	2026-11-07 12:01:26.321861024 +0800
+@@ -170,6 +170,23 @@
+ 本工程默认改用发行版原生的 `/usr/bin/aapt2` 与 `/usr/bin/zipalign`（Ubuntu: `apt install aapt zipalign apksigner`），
+ `d8`/`apksigner` 用 Java jar 版本，跨架构可用。也可用环境变量覆盖：`AAPT2_BIN`、`ZIPALIGN_BIN`、`APKSIGNER_BIN`。
+ 
++### v1.2.1 构建与验证记录（分类 UI/UX 改造）
++
++- 产物：`ZLibClone-1.2.1.apk`，155,690 B，SHA-256 `5a410b51…72c9a51`，versionCode 8 / versionName 1.2.1
++- 变更（只改分类模块 UI/交互层与资源，不改分类数据链路）：
++  - 顶栏联动：分类 L0 显示书库标题 + 全库搜索框；钻取到 L1/L2 时 `LibraryView.setChromeCompact(true)` 收紧为 36dp 分段栏，离开分类恢复；
++    L0 隐藏重复的标题/面包屑，只保留「共 N 个一级分类 · 部分未分类书籍可通过顶部搜索查找」；
++  - 层级导航：固定 48dp 双段面包屑（`‹ 全部分类` 回 L0；`/ 一级分类` 回 L1）；L1 首行「浏览全部 · 一级分类」、L2 标题「一级分类 · 全部」；
++  - 语言筛选：9 个预创建 Chip（48dp 触控热区 + 32dp 胶囊，选中主色加粗/未选中次要墨色，选中自动居中），切换语言不再重建 View；
++    L2 切语言保留旧书单 α=0.4 过渡（禁用滚动/点击），返回后恢复并回到列表顶部，避免骨架闪烁；
++  - 骨架/状态：骨架拆为列表形态（L0）与网格形态（L2）；L2 末页显示「已展示该分类前 N 本精选藏书 · 更多书籍请使用顶部搜索」尾注；
++  - 导航记忆：L0/L1 列表滚动位置精准恢复；分类→热门复用缓存、不重复请求；返回上级时作废在途分类请求，避免旧回调覆盖当前层级 UI；
++  - 详情映射：无 hash 书目使用 `LruCache(64)` 缓存 + 可取消加载弹窗，取消后递增 token 丢弃回调；分类错误「重试」接镜像故障切换；
++  - 逐文件改动与资源 ID 对照见 `分类UI改造-变更说明.md`，可合入补丁见 `分类UI改造-v1.2.0.diff`（`patch -p1` 对 v1.2.0 基线 0 冲突）。
++- 验证：aapt2 compile/link + javac + d8 + zipalign(4) + apksigner(v1+v2+v3) 全部通过；
++  `aapt dump badging` 确认 versionCode 8 / versionName 1.2.1；独立评审发现的 1 个高危状态机缺陷（在途分类请求覆盖当前层级）已修复。
++- 未做真机运行验证：本环境无 Android 运行时，分类页手势、滚动恢复手感、骨架/尾注/弹窗视觉需真机确认。
++
+ ### v1.2.0 构建与验证记录（分类功能）
+ 
+ - 产物：`ZLibClone-1.2.0.apk`，147,010 B，SHA-256 `1ac30a96…80c881`，versionCode 7 / versionName 1.2.0
+diff -ruN a/app/src/main/java/com/zlib/clone/net/BookMapper.java b/app/src/main/java/com/zlib/clone/net/BookMapper.java
+--- a/app/src/main/java/com/zlib/clone/net/BookMapper.java	2026-11-07 12:01:26.217861024 +0800
++++ b/app/src/main/java/com/zlib/clone/net/BookMapper.java	2026-11-07 12:01:26.273861024 +0800
+@@ -39,6 +39,24 @@
+     }
+ 
+     /**
++     * 详情映射缓存键：优先用书籍 ID（网页书目与 /eapi 的书籍 ID 相同），
++     * ID 缺失时退回网页详情绝对地址；都不可用时返回空串（不缓存）。
++     *
++     * 缓存本体由界面层（CategoryView 的 LruCache）持有，这里只负责键的语义，
++     * 使 BookMapper 保持纯 Java（可被 JVM 联网测试直接编译/运行，不依赖 android.*）。
++     */
++    public static String cacheKey(Book webBook) {
++        if (webBook == null) {
++            return "";
++        }
++        if (webBook.id > 0) {
++            return "id:" + webBook.id;
++        }
++        String url = webBook.webUrl == null ? "" : webBook.webUrl.trim();
++        return url.length() == 0 ? "" : "url:" + url;
++    }
++
++    /**
+      * 尝试把网页分类页的一本书映射到原生详情接口。
+      * 该方法是阻塞的，调用方应放在后台线程（Task.run）。
+      */
+diff -ruN a/app/src/main/java/com/zlib/clone/ui/CategoryView.java b/app/src/main/java/com/zlib/clone/ui/CategoryView.java
+--- a/app/src/main/java/com/zlib/clone/ui/CategoryView.java	2026-11-07 12:01:26.221861024 +0800
++++ b/app/src/main/java/com/zlib/clone/ui/CategoryView.java	2026-11-07 12:01:26.281861024 +0800
+@@ -6,10 +6,12 @@
+ import android.content.DialogInterface;
+ import android.content.Intent;
+ import android.content.res.Configuration;
++import android.graphics.Typeface;
+ import android.net.Uri;
+ import android.util.AttributeSet;
+-import android.util.TypedValue;
++import android.util.LruCache;
+ import android.view.LayoutInflater;
++import android.view.MotionEvent;
+ import android.view.View;
+ import android.view.ViewGroup;
+ import android.widget.AbsListView;
+@@ -17,6 +19,7 @@
+ import android.widget.BaseAdapter;
+ import android.widget.FrameLayout;
+ import android.widget.GridView;
++import android.widget.HorizontalScrollView;
+ import android.widget.LinearLayout;
+ import android.widget.ListView;
+ import android.widget.TextView;
+@@ -28,7 +31,9 @@
+ import com.zlib.clone.model.Book;
+ import com.zlib.clone.model.Category;
+ import com.zlib.clone.model.CategoryPage;
++import com.zlib.clone.net.Api;
+ import com.zlib.clone.net.BookMapper;
++import com.zlib.clone.net.Hosts;
+ import com.zlib.clone.net.WebCategorySource;
+ 
+ import java.util.ArrayList;
+@@ -39,11 +44,14 @@
+  *
+  * 三层结构（保留网站原始分类树，不做多分类合并）：
+  * 1) 一级分类目录（/categories 解析结果）；
+- * 2) 某个一级分类下的二级分类（第一行是「全部」，即该一级分类自身的书单）；
++ * 2) 某个一级分类下的二级分类（首行「浏览全部 · 一级分类」= 该一级分类自身的书单）；
+  * 3) 分类书单：分类 + 语言（AND）+ 分页，书目进入原生详情或回退网页详情。
+  *
+- * 状态区分：首次加载（骨架）、当前条件没有结果（空态）、网络失败、需要完成网页验证、
+- * 页面结构变化解析失败、分类不存在 —— 不再统一显示「书源暂未提供内容分类」。
++ * 顶栏联动：L0 走完整书库 chrome（26sp 标题 + 全库搜索框），L1/L2 通过 {@link ChromeHost}
++ * 切换为紧凑模式（只保留 36dp 分段栏），并显示固定 48dp 的双段面包屑（‹ 全部分类 / 一级分类）。
++ *
++ * 状态区分：首次加载（按层级显示列表/网格两种骨架）、当前条件没有结果（空态）、网络失败、
++ * 需要完成网页验证、页面结构变化解析失败、分类不存在 —— 不再统一显示「书源暂未提供内容分类」。
+  */
+ public class CategoryView extends FrameLayout {
+ 
+@@ -59,14 +67,29 @@
+     /** 语言筛选：值是网页 GET 参数 languages[] 的真实取值（已实测），空串表示不限语言。 */
+     private static final String[] LANGUAGE_VALUES = Categories.LANGUAGE_VALUES;
+ 
+-    private TextView backButton;
++    /** 书籍详情映射缓存（容量 64，Key 为 book.id 或网页详情地址）：命中后跳过二次网络映射。 */
++    private static final LruCache<String, Book> MAPPING_CACHE = new LruCache<String, Book>(64);
++
++    /** 宿主编排接口：分类视图钻取层级变化时通知书库页切换紧凑/完整顶栏。 */
++    public interface ChromeHost {
++        /** @param compact true = L1/L2（隐藏书库标题与全库搜索框，仅保留分段栏） */
++        void setChromeCompact(boolean compact);
++    }
++
++    private ChromeHost chromeHost;
++
++    private View breadcrumbBar;
++    private TextView backRootButton;
++    private TextView backParentButton;
+     private TextView titleView;
+     private TextView subtitleView;
+     private LinearLayout languageRow;
+-    private View languageBar;
++    private HorizontalScrollView languageBar;
+     private ListView categoryList;
+     private GridView bookGrid;
+     private LinearLayout skeleton;
++    private LinearLayout skeletonList;
++    private LinearLayout skeletonGrid;
+     private LinearLayout emptyState;
+     private TextView emptyTitle;
+     private TextView emptyDesc;
+@@ -80,6 +103,9 @@
+     private CategoryRowAdapter rowAdapter;
+     private BookAdapter bookAdapter;
+ 
++    /** 预创建的语言 Chip：切换语言时只更新选中态/字重，不重建 View。 */
++    private final List<LanguageChip> languageChips = new ArrayList<LanguageChip>();
++
+     private final List<Category> roots = new ArrayList<Category>();
+     private final List<Row> rows = new ArrayList<Row>();
+     private String baseUrl = "";
+@@ -94,7 +120,19 @@
+     private int requestToken = 0;
+     private String pageUrlPattern = "";
+     private boolean started = false;
+-    private boolean mappingNative = false;
++
++    /** L0 / L1 列表滚动位置记忆（返回上一级时精准恢复）。 */
++    private int l0ScrollIndex = 0;
++    private int l0ScrollTop = 0;
++    private int l1ScrollIndex = 0;
++    private int l1ScrollTop = 0;
++
++    /** 最近一次分类请求失败是否值得先切换镜像再重试（分类不存在时换镜像无用）。 */
++    private boolean lastFailureServerSide = true;
++
++    /** 映射加载弹窗与请求 token：取消后递增 token，丢弃在途回调。 */
++    private AlertDialog mappingDialog;
++    private int mappingToken = 0;
+ 
+     public CategoryView(Context context) {
+         super(context);
+@@ -106,6 +144,12 @@
+         init(context);
+     }
+ 
++    public CategoryView(Context context, ChromeHost host) {
++        super(context);
++        this.chromeHost = host;
++        init(context);
++    }
++
+     // =====================================================================
+     // 初始化
+     // =====================================================================
+@@ -113,14 +157,18 @@
+     private void init(Context context) {
+         LayoutInflater.from(context).inflate(R.layout.view_categories, this, true);
+ 
+-        backButton = (TextView) findViewById(R.id.btn_cat_back);
++        breadcrumbBar = findViewById(R.id.ll_cat_breadcrumb);
++        backRootButton = (TextView) findViewById(R.id.btn_cat_back_root);
++        backParentButton = (TextView) findViewById(R.id.btn_cat_back_parent);
+         titleView = (TextView) findViewById(R.id.tv_cat_title);
+         subtitleView = (TextView) findViewById(R.id.tv_cat_subtitle);
+         languageRow = (LinearLayout) findViewById(R.id.ll_cat_languages);
+-        languageBar = findViewById(R.id.hsv_cat_languages);
++        languageBar = (HorizontalScrollView) findViewById(R.id.hsv_cat_languages);
+         categoryList = (ListView) findViewById(R.id.lv_cat_categories);
+         bookGrid = (GridView) findViewById(R.id.gv_cat_books);
+         skeleton = (LinearLayout) findViewById(R.id.ll_cat_skeleton);
++        skeletonList = (LinearLayout) findViewById(R.id.ll_cat_skeleton_list);
++        skeletonGrid = (LinearLayout) findViewById(R.id.ll_cat_skeleton_grid);
+         emptyState = (LinearLayout) findViewById(R.id.ll_cat_empty);
+         emptyTitle = (TextView) findViewById(R.id.tv_cat_empty_title);
+         emptyDesc = (TextView) findViewById(R.id.tv_cat_empty_desc);
+@@ -171,11 +219,25 @@
+             });
+         }
+ 
+-        if (backButton != null) {
+-            backButton.setOnClickListener(new View.OnClickListener() {
++        if (backRootButton != null) {
++            backRootButton.setOnClickListener(new View.OnClickListener() {
+                 @Override
+                 public void onClick(View v) {
+-                    handleBack();
++                    // 跨级返回：L1 / L2 直接回到 L0，并恢复 L0 目录的滚动位置。
++                    renderRoot(true);
++                }
++            });
++        }
++        if (backParentButton != null) {
++            backParentButton.setOnClickListener(new View.OnClickListener() {
++                @Override
++                public void onClick(View v) {
++                    // L2 → 对应 L1（带上滚动位置恢复）。
++                    if (parent != null) {
++                        openChildren(parent, true);
++                    } else {
++                        renderRoot(true);
++                    }
+                 }
+             });
+         }
+@@ -197,16 +259,12 @@
+             errorRetry.setOnClickListener(new View.OnClickListener() {
+                 @Override
+                 public void onClick(View v) {
+-                    if (level == LEVEL_BOOKS) {
+-                        loadBooks(1, true);
+-                    } else {
+-                        loadTree();
+-                    }
++                    retryWithFailover();
+                 }
+             });
+         }
+ 
+-        buildLanguageChips();
++        createLanguageChips();
+         updateHeader();
+     }
+ 
+@@ -227,6 +285,7 @@
+ 
+     /** LibraryView 切到「分类」分段时调用；只在首次进入时加载分类目录。 */
+     public void onShown() {
++        syncChrome();
+         if (started) {
+             return;
+         }
+@@ -234,18 +293,25 @@
+         loadTree();
+     }
+ 
++    /** 把当前层级的顶栏状态同步给宿主（切回分类分段时调用，避免残留紧凑/完整状态）。 */
++    public void syncChrome() {
++        if (chromeHost != null) {
++            chromeHost.setChromeCompact(level != LEVEL_ROOT);
++        }
++    }
++
+     /** 返回键：书单→二级列表→一级目录；已在目录层返回 false（由外层回到「热门」）。 */
+     public boolean handleBack() {
+         if (level == LEVEL_BOOKS) {
+             if (parent != null) {
+-                openChildren(parent);
++                openChildren(parent, true);
+             } else {
+-                renderRoot();
++                renderRoot(true);
+             }
+             return true;
+         }
+         if (level == LEVEL_CHILDREN) {
+-            renderRoot();
++            renderRoot(true);
+             return true;
+         }
+         return false;
+@@ -258,7 +324,7 @@
+     private void loadTree() {
+         final int token = ++requestToken;
+         loading = true;
+-        showSkeletonState();
++        showSkeletonStateForLevel();
+         Task.run(new Task.Job<WebCategorySource.Tree>() {
+             @Override
+             public WebCategorySource.Tree run() throws Exception {
+@@ -282,15 +348,16 @@
+                 baseUrl = tree.baseUrl;
+                 roots.clear();
+                 roots.addAll(tree.roots);
+-                renderRoot();
++                renderRoot(false);
+             }
+         }, new Task.Err() {
+             @Override
+             public void err(Exception e) {
+-                if (token != requestToken) {
++                if (token != requestToken || level != LEVEL_BOOKS) {
+                     return;
+                 }
+                 loading = false;
++                lastFailureServerSide = isServerSideFailure(e);
+                 Activity activity = hostActivity();
+                 if (activity != null && activity.isFinishing()) {
+                     return;
+@@ -300,7 +367,8 @@
+         });
+     }
+ 
+-    private void renderRoot() {
++    private void renderRoot(boolean restoreScroll) {
++        invalidatePendingRequests();
+         level = LEVEL_ROOT;
+         parent = null;
+         category = null;
+@@ -323,10 +391,18 @@
+             showErrorState(getContext().getString(R.string.category_error_parse));
+         } else {
+             showListState();
++            if (restoreScroll) {
++                restoreCategoryScroll(l0ScrollIndex, l0ScrollTop);
++            }
+         }
+     }
+ 
+     private void openChildren(Category value) {
++        openChildren(value, false);
++    }
++
++    private void openChildren(Category value, boolean restoreScroll) {
++        invalidatePendingRequests();
+         level = LEVEL_CHILDREN;
+         parent = value;
+         category = null;
+@@ -336,8 +412,8 @@
+         rows.clear();
+         Row all = new Row();
+         all.all = true;
+-        all.title = getContext().getString(R.string.category_all_books);
+-        all.subtitle = value.title();
++        all.title = getContext().getString(R.string.category_browse_all, value.title());
++        all.subtitle = getContext().getString(R.string.category_browse_all_subtitle);
+         all.count = "";
+         rows.add(all);
+         for (Category child : value.children) {
+@@ -352,6 +428,9 @@
+         rowAdapter.notifyDataSetChanged();
+         updateHeader();
+         showListState();
++        if (restoreScroll) {
++            restoreCategoryScroll(l1ScrollIndex, l1ScrollTop);
++        }
+     }
+ 
+     private void onRowClicked(int position) {
+@@ -361,6 +440,7 @@
+         Row row = rows.get(position);
+         if (level == LEVEL_ROOT) {
+             if (row.category != null) {
++                captureCategoryScroll(LEVEL_ROOT);
+                 openChildren(row.category);
+             }
+             return;
+@@ -368,6 +448,7 @@
+         if (level == LEVEL_CHILDREN) {
+             Category target = row.all ? parent : row.category;
+             if (target != null) {
++                captureCategoryScroll(LEVEL_CHILDREN);
+                 openBooks(target);
+             }
+         }
+@@ -385,7 +466,7 @@
+         totalPages = 1;
+         hasMore = true;
+         pageUrlPattern = "";
+-        buildLanguageChips();
++        updateLanguageChips();
+         updateHeader();
+         loadBooks(1, true);
+     }
+@@ -401,12 +482,26 @@
+         page = 0;
+         totalPages = 1;
+         pageUrlPattern = "";
+-        buildLanguageChips();
++        updateLanguageChips();
+         updateHeader();
+-        loadBooks(1, true);
++        scrollSelectedLanguageToCenter(value);
++        // 切换语言 = 同分类下重新筛选：保留当前书单做半透明过渡，避免骨架屏闪烁。
++        loadBooks(1, true, true);
+     }
+ 
+     private void loadBooks(final int targetPage, final boolean reset) {
++        loadBooks(targetPage, reset, false);
++    }
++
++    /**
++     * 请求一页分类书单。
++     *
++     * @param targetPage              目标页（从 1 开始）
++     * @param reset                   是否重置分页（切分类/切语言/重试为 true，滚动分页为 false）
++     * @param preserveContentOnReset  重置时是否保留当前书单并做半透明过渡（仅切换语言时使用）
++     */
++    private void loadBooks(final int targetPage, final boolean reset,
++                           final boolean preserveContentOnReset) {
+         final int token = ++requestToken;
+         final Category requestCategory = category;
+         final String requestLanguage = language;
+@@ -415,17 +510,29 @@
+             return;
+         }
+         loading = true;
++        final boolean keepContent = reset && preserveContentOnReset
++                && bookGrid != null
++                && bookGrid.getVisibility() == View.VISIBLE
++                && bookAdapter.getCount() > 0;
+         if (reset) {
+             page = 0;
+             hasMore = true;
+             pageUrlPattern = "";
+-            bookAdapter.clear();
+-            if (bookGrid != null) {
+-                bookGrid.setSelection(0);
++            if (keepContent) {
++                startContentTransition();
++            } else {
++                endContentTransition();
++                bookAdapter.clear();
++                if (bookGrid != null) {
++                    bookGrid.setSelection(0);
++                }
++                Ui.display(loadingMore, false);
++                showSkeletonStateForLevel();
+             }
+-            Ui.display(loadingMore, false);
+-            showSkeletonState();
+         } else {
++            if (loadingMore != null) {
++                loadingMore.setText(R.string.loading_more);
++            }
+             Ui.display(loadingMore, true);
+         }
+ 
+@@ -438,7 +545,7 @@
+         }, new Task.Ok<CategoryPage>() {
+             @Override
+             public void ok(CategoryPage result) {
+-                if (token != requestToken) {
++                if (token != requestToken || level != LEVEL_BOOKS) {
+                     return;
+                 }
+                 loading = false;
+@@ -448,6 +555,9 @@
+                 }
+                 Ui.display(skeleton, false);
+                 Ui.display(loadingMore, false);
++                if (keepContent) {
++                    endContentTransition();
++                }
+ 
+                 CategoryPage value = (result == null) ? new CategoryPage() : result;
+                 page = value.current > 0 ? value.current : targetPage;
+@@ -458,6 +568,9 @@
+                 }
+                 if (reset) {
+                     bookAdapter.setItems(value.items);
++                    if (bookGrid != null) {
++                        bookGrid.setSelection(0);
++                    }
+                 } else if (!value.items.isEmpty()) {
+                     bookAdapter.addItems(value.items);
+                 }
+@@ -466,6 +579,7 @@
+                     showEmptyState();
+                 } else {
+                     showContentState();
++                    refreshPaginationHint();
+                 }
+             }
+         }, new Task.Err() {
+@@ -475,17 +589,20 @@
+                     return;
+                 }
+                 loading = false;
++                lastFailureServerSide = isServerSideFailure(e);
+                 Activity activity = hostActivity();
+                 if (activity != null && activity.isFinishing()) {
+                     return;
+                 }
+                 Ui.display(skeleton, false);
+                 Ui.display(loadingMore, false);
++                endContentTransition();
+                 String message = categoryErrorMessage(e);
+                 if (!reset && bookAdapter.getCount() > 0) {
+                     // 分页失败：保留已加载书单，只提示，可继续滚动重试。
+                     Ui.toast(getContext(), message);
+                     showContentState();
++                    refreshPaginationHint();
+                 } else {
+                     showErrorState(message);
+                 }
+@@ -493,6 +610,55 @@
+         });
+     }
+ 
++    /** L2 分页结束提示：还有下一页时静默，没有下一页且列表非空时展示「前 N 本」尾注。 */
++    private void refreshPaginationHint() {
++        if (loadingMore == null) {
++            return;
++        }
++        if (level != LEVEL_BOOKS || bookGrid == null
++                || bookGrid.getVisibility() != View.VISIBLE
++                || bookAdapter == null || bookAdapter.getCount() <= 0) {
++            Ui.display(loadingMore, false);
++            return;
++        }
++        if (hasMore) {
++            Ui.display(loadingMore, false);
++            return;
++        }
++        loadingMore.setText(getContext().getString(R.string.category_end_hint,
++                bookAdapter.getCount()));
++        Ui.display(loadingMore, true);
++    }
++
++    /** 切换语言时的过渡：保留旧书单、半透明并禁止滚动/点击，避免骨架屏闪烁。 */
++    private void startContentTransition() {
++        if (bookGrid == null) {
++            return;
++        }
++        bookGrid.setAlpha(0.4f);
++        bookGrid.setEnabled(false);
++        bookGrid.setOnTouchListener(new View.OnTouchListener() {
++            @Override
++            public boolean onTouch(View v, MotionEvent event) {
++                return true;
++            }
++        });
++        if (loadingMore != null) {
++            loadingMore.setText(R.string.category_switching_language);
++            Ui.display(loadingMore, true);
++        }
++    }
++
++    /** 结束过渡：恢复不透明度、可点击/可滚动状态并移除触摸拦截。 */
++    private void endContentTransition() {
++        if (bookGrid == null) {
++            return;
++        }
++        bookGrid.setAlpha(1.0f);
++        bookGrid.setEnabled(true);
++        bookGrid.setOnTouchListener(null);
++    }
++
+     // =====================================================================
+     // 书籍详情：可靠映射进原生详情，否则回退网页详情
+     // =====================================================================
+@@ -507,11 +673,18 @@
+             BookDetailActivity.open(activity, book);
+             return;
+         }
+-        if (mappingNative) {
++        // 映射缓存命中：跳过二次网络检索/详情请求，直接打开原生详情。
++        final String cacheKey = BookMapper.cacheKey(book);
++        Book cached = cacheKey.length() == 0 ? null : MAPPING_CACHE.get(cacheKey);
++        if (cached != null) {
++            BookDetailActivity.open(activity, cached);
+             return;
+         }
+-        mappingNative = true;
+-        Ui.toast(getContext(), R.string.category_mapping_loading);
++        if (mappingDialog != null && mappingDialog.isShowing()) {
++            return;
++        }
++        final int token = ++mappingToken;
++        showMappingDialog(activity, token);
+         Task.run(new Task.Job<BookMapper.Result>() {
+             @Override
+             public BookMapper.Result run() throws Exception {
+@@ -520,12 +693,19 @@
+         }, new Task.Ok<BookMapper.Result>() {
+             @Override
+             public void ok(BookMapper.Result result) {
+-                mappingNative = false;
++                if (token != mappingToken) {
++                    // 用户已取消/已发起新的映射请求：丢弃这次回调。
++                    return;
++                }
++                dismissMappingDialog();
+                 Activity host = hostActivity();
+                 if (host == null || host.isFinishing()) {
+                     return;
+                 }
+                 if (result != null && result.book != null) {
++                    if (cacheKey.length() > 0) {
++                        MAPPING_CACHE.put(cacheKey, result.book);
++                    }
+                     BookDetailActivity.open(host, result.book);
+                 } else {
+                     showWebDetailDialog(book);
+@@ -534,12 +714,68 @@
+         }, new Task.Err() {
+             @Override
+             public void err(Exception e) {
+-                mappingNative = false;
++                if (token != mappingToken) {
++                    return;
++                }
++                dismissMappingDialog();
+                 showWebDetailDialog(book);
+             }
+         });
+     }
+ 
++    /** 显式映射加载弹窗（可取消）：替代原来静默 Toast + 忽略后续点击的交互。 */
++    private void showMappingDialog(Activity activity, final int token) {
++        try {
++            AlertDialog dialog = new AlertDialog.Builder(activity)
++                    .setMessage(R.string.category_mapping_dialog_message)
++                    .setNegativeButton(R.string.action_cancel, new DialogInterface.OnClickListener() {
++                        @Override
++                        public void onClick(DialogInterface d, int which) {
++                            cancelMapping(token);
++                        }
++                    })
++                    .create();
++            dialog.setOnCancelListener(new DialogInterface.OnCancelListener() {
++                @Override
++                public void onCancel(DialogInterface d) {
++                    cancelMapping(token);
++                }
++            });
++            dialog.show();
++            mappingDialog = dialog;
++        } catch (Throwable ignored) {
++            // 弹窗失败时继续做映射，行为退化为无提示加载。
++        }
++    }
++
++    /** 取消映射：递增 token 丢弃在途回调并恢复书单可点击状态。 */
++    private void cancelMapping(int token) {
++        if (token == mappingToken) {
++            mappingToken++;
++        }
++        dismissMappingDialog();
++    }
++
++    private void dismissMappingDialog() {
++        AlertDialog dialog = mappingDialog;
++        mappingDialog = null;
++        if (dialog != null) {
++            try {
++                if (dialog.isShowing()) {
++                    dialog.dismiss();
++                }
++            } catch (Throwable ignored) {
++                // 弹窗已随 Activity 销毁时忽略。
++            }
++        }
++    }
++
++    @Override
++    protected void onDetachedFromWindow() {
++        dismissMappingDialog();
++        super.onDetachedFromWindow();
++    }
++
+     /** 无法可靠映射时：允许打开该书网页详情（不把不同版本/语言强行合并）。 */
+     private void showWebDetailDialog(final Book book) {
+         final Activity activity = hostActivity();
+@@ -586,20 +822,34 @@
+         if (titleView == null) {
+             return;
+         }
+-        boolean showBack = level != LEVEL_ROOT;
+-        Ui.display(backButton, showBack);
+-        if (showBack) {
+-            backButton.setText(level == LEVEL_BOOKS
+-                    ? getContext().getString(R.string.category_back_parent,
+-                    parent == null ? getContext().getString(R.string.category_root_title) : parent.title())
+-                    : getContext().getString(R.string.category_back_root));
++        boolean showBreadcrumb = level != LEVEL_ROOT;
++        Ui.display(breadcrumbBar, showBreadcrumb);
++        Ui.display(titleView, showBreadcrumb);
++        if (showBreadcrumb) {
++            Ui.display(backRootButton, true);
++            boolean showParent = level == LEVEL_BOOKS && parent != null;
++            Ui.display(backParentButton, showParent);
++            if (showParent) {
++                backParentButton.setText(getContext().getString(
++                        R.string.category_back_parent, parent.title()));
++                backParentButton.setContentDescription(getContext().getString(
++                        R.string.category_back_parent_desc) + "：" + parent.title());
++            }
+         }
+         Ui.display(languageBar, level == LEVEL_BOOKS);
+ 
+         if (level == LEVEL_ROOT) {
+             titleView.setText(R.string.category_root_title);
+-            subtitleView.setText(getContext().getString(R.string.category_root_subtitle, roots.size()));
++            if (roots.isEmpty()) {
++                // 分类树还没加载完：不显示「共 0 个一级分类」的中间值。
++                Ui.display(subtitleView, false);
++            } else {
++                Ui.display(subtitleView, true);
++                subtitleView.setText(getContext().getString(
++                        R.string.category_root_subtitle, roots.size()));
++            }
+         } else if (level == LEVEL_CHILDREN) {
++            Ui.display(subtitleView, true);
+             titleView.setText(parent == null ? "" : parent.title());
+             if (parent != null && parent.hasChineseName()) {
+                 subtitleView.setText(getContext().getString(R.string.category_children_subtitle,
+@@ -610,10 +860,15 @@
+             }
+         } else {
+             StringBuilder title = new StringBuilder();
+-            if (parent != null && category != null && category != parent) {
+-                title.append(parent.title()).append(" / ");
++            if (category != null && parent != null && category == parent) {
++                // 从「浏览全部 · 一级分类」进入：标题显示「一级分类 · 全部」，与 L1 首行呼应。
++                title.append(getContext().getString(R.string.category_all_title, parent.title()));
++            } else {
++                if (parent != null) {
++                    title.append(parent.title()).append(" / ");
++                }
++                title.append(category == null ? "" : category.title());
+             }
+-            title.append(category == null ? "" : category.title());
+             titleView.setText(title.toString());
+             StringBuilder sub = new StringBuilder();
+             if (page > 0) {
+@@ -627,57 +882,179 @@
+             }
+             subtitleView.setText(sub.toString());
+         }
++        syncChrome();
+     }
+ 
+-    private void buildLanguageChips() {
++    /** 一次性创建 9 个语言 Chip（外层 48dp 热区 + 内层 32dp 胶囊），后续只更新状态。 */
++    private void createLanguageChips() {
+         if (languageRow == null) {
+             return;
+         }
+         languageRow.removeAllViews();
+-        for (String value : LANGUAGE_VALUES) {
+-            final String option = value;
+-            TextView chip = new TextView(getContext());
+-            chip.setText(CategoryNames.languageDisplayName(value));
+-            chip.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+-            chip.setGravity(android.view.Gravity.CENTER);
+-            chip.setMinHeight(Ui.dp(getContext(), 32));
+-            chip.setPadding(Ui.dp(getContext(), 14), Ui.dp(getContext(), 6),
+-                    Ui.dp(getContext(), 14), Ui.dp(getContext(), 6));
+-            chip.setBackgroundResource(R.drawable.bg_segment_selector);
+-            chip.setTextColor(getContext().getResources().getColorStateList(R.color.segment_text));
+-            chip.setSelected(option.equals(language));
+-            chip.setClickable(true);
+-            chip.setFocusable(true);
+-            chip.setContentDescription(CategoryNames.languageDisplayName(value)
+-                    + (option.equals(language) ? getContext().getString(R.string.selected_suffix) : ""));
+-            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+-            params.setMargins(0, 0, Ui.dp(getContext(), 8), 0);
+-            chip.setLayoutParams(params);
+-            chip.setOnClickListener(new View.OnClickListener() {
++        languageChips.clear();
++        LayoutInflater inflater = LayoutInflater.from(getContext());
++        for (final String value : LANGUAGE_VALUES) {
++            View touch = inflater.inflate(R.layout.row_language_chip, languageRow, false);
++            TextView label = (TextView) touch.findViewById(R.id.tv_language_chip);
++            if (label != null) {
++                label.setText(CategoryNames.languageDisplayName(value));
++            }
++            touch.setOnClickListener(new View.OnClickListener() {
+                 @Override
+                 public void onClick(View v) {
+-                    selectLanguage(option);
++                    selectLanguage(value);
+                 }
+             });
+-            languageRow.addView(chip);
++            LanguageChip chip = new LanguageChip();
++            chip.value = value;
++            chip.touch = touch;
++            chip.label = label;
++            languageChips.add(chip);
++            languageRow.addView(touch);
++        }
++        updateLanguageChips();
++    }
++
++    /** 只遍历更新选中态/描边背景（state_selected）/字重，不 removeAllViews。 */
++    private void updateLanguageChips() {
++        for (LanguageChip chip : languageChips) {
++            boolean selected = chip.value.equals(language);
++            chip.touch.setSelected(selected);
++            if (chip.label != null) {
++                chip.label.setSelected(selected);
++                chip.label.setTypeface(Typeface.DEFAULT,
++                        selected ? Typeface.BOLD : Typeface.NORMAL);
++            }
++            chip.touch.setContentDescription(CategoryNames.languageDisplayName(chip.value)
++                    + (selected ? getContext().getString(R.string.selected_suffix) : ""));
++        }
++    }
++
++    /** 选中 Chip 自动滚动到可视区中央（smoothScrollTo）。 */
++    private void scrollSelectedLanguageToCenter(final String value) {
++        if (languageBar == null || languageRow == null) {
++            return;
++        }
++        languageBar.post(new Runnable() {
++            @Override
++            public void run() {
++                for (LanguageChip chip : languageChips) {
++                    if (!chip.value.equals(value)) {
++                        continue;
++                    }
++                    int paddingLeft = languageBar.getPaddingLeft();
++                    int contentWidth = paddingLeft + languageRow.getWidth()
++                            + languageBar.getPaddingRight();
++                    int center = paddingLeft + chip.touch.getLeft() + chip.touch.getWidth() / 2;
++                    int target = center - languageBar.getWidth() / 2;
++                    int max = Math.max(0, contentWidth - languageBar.getWidth());
++                    if (target < 0) {
++                        target = 0;
++                    }
++                    if (target > max) {
++                        target = max;
++                    }
++                    languageBar.smoothScrollTo(target, 0);
++                    return;
++                }
++            }
++        });
++    }
++
++    // =====================================================================
++    // 重试 / 服务器故障切换
++    // =====================================================================
++
++    /**
++     * 重试：与书库页一致，上一次失败像是服务器侧问题（网络/验证/页面改版）时，
++     * 先自动挑一个可用的备用镜像并切换，再重新请求；分类不存在则直接重试当前站点。
++     */
++    private void retryWithFailover() {
++        if (loading) {
++            return;
++        }
++        if (!lastFailureServerSide) {
++            retryCurrent();
++            return;
++        }
++        if (errorRetry != null) {
++            errorRetry.setEnabled(false);
++        }
++        if (errorDesc != null) {
++            errorDesc.setText(R.string.switching_server);
++        }
++        Task.run(new Task.Job<String>() {
++            @Override
++            public String run() throws Exception {
++                return Hosts.pickNext(Api.get().base());
++            }
++        }, new Task.Ok<String>() {
++            @Override
++            public void ok(String base) {
++                if (errorRetry != null) {
++                    errorRetry.setEnabled(true);
++                }
++                if (base != null && base.length() > 0) {
++                    try {
++                        Api.get().setBase(base);
++                        // 分类书单请求用的是首次拉树时的 baseUrl，换镜像后一并对齐到新站点。
++                        baseUrl = base;
++                        Ui.toast(getContext(), getResources().getString(
++                                R.string.server_switched, Hosts.hostOf(base)));
++                    } catch (Throwable ignored) {
++                        // 切换失败也继续用当前服务器重试一次。
++                    }
++                }
++                retryCurrent();
++            }
++        }, new Task.Err() {
++            @Override
++            public void err(Exception e) {
++                if (errorRetry != null) {
++                    errorRetry.setEnabled(true);
++                }
++                retryCurrent();
++            }
++        });
++    }
++
++    /** 重试当前层级（L0 分类目录 / L2 书单）。 */
++    private void retryCurrent() {
++        if (level == LEVEL_BOOKS) {
++            loadBooks(1, true);
++        } else {
++            loadTree();
++        }
++    }
++
++    /** 分类不存在是数据层结论（换镜像无用）；网络失败/网页验证/页面结构变化值得先换镜像。 */
++    private static boolean isServerSideFailure(Throwable error) {
++        if (!(error instanceof WebCategorySource.SourceException)) {
++            return true;
+         }
++        int kind = ((WebCategorySource.SourceException) error).kind;
++        return kind != WebCategorySource.ERROR_NOT_FOUND;
+     }
+ 
+     // =====================================================================
+     // 状态
+     // =====================================================================
+ 
+-    private void showSkeletonState() {
++    /** 按当前层级选择骨架形态：L0 列表骨架；L2 网格骨架（与真实书封网格同构）。 */
++    private void showSkeletonStateForLevel() {
+         Ui.display(categoryList, false);
+         Ui.display(bookGrid, false);
+         Ui.display(skeleton, true);
++        boolean gridSkeleton = level == LEVEL_BOOKS;
++        Ui.display(skeletonList, !gridSkeleton);
++        Ui.display(skeletonGrid, gridSkeleton);
+         Ui.display(emptyState, false);
+         Ui.display(errorState, false);
+         Ui.display(loadingMore, false);
+     }
+ 
+     private void showListState() {
++        endContentTransition();
+         Ui.display(categoryList, true);
+         Ui.display(bookGrid, false);
+         Ui.display(skeleton, false);
+@@ -699,6 +1076,7 @@
+         Ui.display(bookGrid, false);
+         Ui.display(skeleton, false);
+         Ui.display(errorState, false);
++        Ui.display(loadingMore, false);
+         if (emptyTitle != null) {
+             emptyTitle.setText(R.string.category_empty_title);
+         }
+@@ -728,6 +1106,7 @@
+         }
+         if (errorRetry != null) {
+             errorRetry.setText(R.string.action_retry);
++            errorRetry.setEnabled(true);
+         }
+         Ui.display(errorState, true);
+         Ui.display(loadingMore, false);
+@@ -748,9 +1127,61 @@
+             }
+             return getContext().getString(R.string.category_error_network);
+         }
+-        String text = Ui.errorText(e);
+-        return (text == null || text.length() == 0)
+-                ? getContext().getString(R.string.category_error_unknown) : text;
++        // 非分类数据源的底层异常：只归入「网络失败 / 其它」两类，不把英文异常/HTTP 状态透给用户。
++        if (e instanceof java.net.SocketTimeoutException
++                || e instanceof java.net.UnknownHostException
++                || e instanceof java.net.ConnectException
++                || e instanceof javax.net.ssl.SSLException) {
++            return getContext().getString(R.string.category_error_network);
++        }
++        return getContext().getString(R.string.category_error_unknown);
++    }
++
++    /**
++     * 作废所有在途的分类请求（返回上一级/跨级返回时调用）。
++     *
++     * 旧版只在发起新请求时递增 token；如果 L2 书单请求在途时用户点面包屑回到 L1/L0，
++     * 旧回调的 token 仍然有效，会把书单/空态/错误态覆盖到分类目录列表上。
++     */
++    private void invalidatePendingRequests() {
++        requestToken++;
++        loading = false;
++        endContentTransition();
++        Ui.display(loadingMore, false);
++    }
++
++    // =====================================================================
++    // 滚动位置记忆
++    // =====================================================================
++
++    private void captureCategoryScroll(int atLevel) {
++        if (categoryList == null) {
++            return;
++        }
++        int index = categoryList.getFirstVisiblePosition();
++        View first = categoryList.getChildAt(0);
++        int top = first == null ? 0 : first.getTop();
++        if (atLevel == LEVEL_ROOT) {
++            l0ScrollIndex = index;
++            l0ScrollTop = top;
++        } else {
++            l1ScrollIndex = index;
++            l1ScrollTop = top;
++        }
++    }
++
++    private void restoreCategoryScroll(final int index, final int top) {
++        if (categoryList == null) {
++            return;
++        }
++        // 直接恢复一次，再在下一帧兜底一次（首次显示列表时布局尚未完成）。
++        categoryList.setSelectionFromTop(index, top);
++        categoryList.post(new Runnable() {
++            @Override
++            public void run() {
++                categoryList.setSelectionFromTop(index, top);
++            }
++        });
+     }
+ 
+     // =====================================================================
+@@ -762,19 +1193,26 @@
+         return (context instanceof Activity) ? (Activity) context : null;
+     }
+ 
+-    private static String readableType(String type) {
++    private String readableType(String type) {
+         if (type == null || type.length() == 0) {
+             return "";
+         }
+         if ("fiction".equalsIgnoreCase(type)) {
+-            return "虚构类";
++            return getContext().getString(R.string.category_type_fiction);
+         }
+         if ("non-fiction".equalsIgnoreCase(type)) {
+-            return "非虚构类";
++            return getContext().getString(R.string.category_type_non_fiction);
+         }
+         return type;
+     }
+ 
++    /** 语言胶囊 View 句柄（预创建后只更新状态）。 */
++    private static final class LanguageChip {
++        String value = "";
++        View touch;
++        TextView label;
++    }
++
+     /** 分类列表行模型。 */
+     private static final class Row {
+         Category category;
+diff -ruN a/app/src/main/java/com/zlib/clone/ui/LibraryView.java b/app/src/main/java/com/zlib/clone/ui/LibraryView.java
+--- a/app/src/main/java/com/zlib/clone/ui/LibraryView.java	2026-11-07 12:01:26.229861024 +0800
++++ b/app/src/main/java/com/zlib/clone/ui/LibraryView.java	2026-11-07 12:01:26.285861024 +0800
+@@ -44,7 +44,7 @@
+  * - 滚动分页，旧响应（requestToken 不一致）一律丢弃，避免覆盖新结果；
+  * - 点击卡片进入 BookDetailActivity；handleBack() 供 MainActivity 返回键处理搜索态。
+  */
+-public class LibraryView extends FrameLayout {
++public class LibraryView extends FrameLayout implements CategoryView.ChromeHost {
+ 
+     private static final int RANK_POPULAR = 0;
+     private static final int RANK_CATEGORIES = 1;
+@@ -57,6 +57,8 @@
+     /** 分页触底阈值：最后可见项 + 4 >= 总数时加载下一页。 */
+     private static final int PAGINATION_THRESHOLD = 4;
+ 
++    private TextView libraryTitle;
++    private LinearLayout searchBox;
+     private EditText searchInput;
+     private ImageButton clearButton;
+     private TextView submitButton;
+@@ -83,6 +85,8 @@
+     private BookAdapter adapter;
+     /** 网页分类目录视图：与榜单/搜索结果共用 fl_library_content，切到「分类」分段时显示。 */
+     private CategoryView categoryView;
++    /** 紧凑顶栏：分类视图钻取到 L1/L2 时隐藏书库标题与全库搜索框，只保留 36dp 分段栏。 */
++    private boolean chromeCompact = false;
+ 
+     /** 数据/加载状态。 */
+     private int rankMode = RANK_POPULAR;
+@@ -96,6 +100,12 @@
+     private boolean started = false;
+     private boolean rankLoaded = false;
+     private boolean rankError = false;
++    /** 当前 Adapter 里缓存的是哪个榜单的数据（用于从分类切回热门时直接复用、不重刷接口）。 */
++    private int cachedRankMode = -1;
++    /** 离开某个榜单时记下的网格滚动位置。 */
++    private int rankScrollMode = -1;
++    private int rankScrollIndex = 0;
++    private int rankScrollTop = 0;
+ 
+     /** 进入搜索前的榜单快照：清空搜索时原样恢复，不重新请求。 */
+     private int savedRankMode = -1;
+@@ -124,6 +134,8 @@
+     private void init(Context context) {
+         LayoutInflater.from(context).inflate(R.layout.view_library, this, true);
+ 
++        libraryTitle = (TextView) findViewById(R.id.tv_library_title);
++        searchBox = (LinearLayout) findViewById(R.id.ll_library_search_box);
+         searchInput = (EditText) findViewById(R.id.et_library_search);
+         clearButton = (ImageButton) findViewById(R.id.btn_library_clear);
+         submitButton = (TextView) findViewById(R.id.btn_library_search);
+@@ -148,7 +160,7 @@
+         // 分类视图挂在书库内容区里，默认隐藏；「分类」分段被点时显示（状态由 CategoryView 自己维护）。
+         ViewGroup contentContainer = (ViewGroup) findViewById(R.id.fl_library_content);
+         if (contentContainer != null) {
+-            categoryView = new CategoryView(context);
++            categoryView = new CategoryView(context, this);
+             contentContainer.addView(categoryView, new FrameLayout.LayoutParams(
+                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+             Ui.display(categoryView, false);
+@@ -348,6 +360,7 @@
+         searchMode = true;
+         query = text;
+         started = true;
++        setChromeCompact(false);
+         updateSegmentsVisibility();
+         updateSegments();
+         hideKeyboard();
+@@ -402,6 +415,19 @@
+         updateSegmentsVisibility();
+         updateSegments();
+ 
++        if (restoreMode == RANK_CATEGORIES) {
++            // 进搜索前在「分类」：恢复分类视图本身的层级/滚动状态，不发分类请求也不显示榜单网格。
++            if (adapter != null) {
++                adapter.setItems(restoreItems);
++            }
++            page = restorePage;
++            hasMore = restoreHasMore;
++            rankLoaded = restoreLoaded;
++            rankError = restoreError;
++            showCategoriesMode();
++            return;
++        }
++
+         if (!restoreLoaded) {
+             // 进搜索前榜单还没成功加载过（例如首屏还在加载），没有数据可恢复，重新请求。
+             loadPage(1, true);
+@@ -471,6 +497,10 @@
+             searchMode = false;
+             clearSavedSnapshot();
+         }
++        int previousRank = rankMode;
++        if (previousRank != RANK_CATEGORIES && rank != previousRank) {
++            rememberRankScroll(previousRank);
++        }
+         rankMode = rank;
+         started = true;
+         updateSegmentsVisibility();
+@@ -481,23 +511,61 @@
+             return;
+         }
+         Ui.display(categoryView, false);
++        setChromeCompact(false);
++        if (rank == cachedRankMode && rankLoaded && adapter != null && adapter.getCount() > 0) {
++            // 回到已有缓存的榜单（如「分类 → 热门」）：只切换视图显隐并恢复列表/滚动位置，
++            // 不再调用 loadPage(1, true) 清空重刷，避免重复请求接口与丢失浏览位置。
++            requestToken++;
++            loading = false;
++            Ui.display(loadingMore, false);
++            showContentState();
++            restoreRankScroll(rank);
++            return;
++        }
+         loadPage(1, true);
+     }
+ 
++    /** 记录当前榜单网格的滚动位置（切走/进分类前调用）。 */
++    private void rememberRankScroll(int mode) {
++        rankScrollMode = mode;
++        if (grid == null) {
++            return;
++        }
++        rankScrollIndex = grid.getFirstVisiblePosition();
++        View child = grid.getChildAt(0);
++        rankScrollTop = child == null ? 0 : child.getTop();
++    }
++
++    /** 恢复对应榜单的滚动位置（仅在列表已恢复时调用）。 */
++    private void restoreRankScroll(final int mode) {
++        if (grid == null || rankScrollMode != mode) {
++            return;
++        }
++        final int index = rankScrollIndex;
++        final int top = rankScrollTop;
++        grid.post(new Runnable() {
++            @Override
++            public void run() {
++                if (!searchMode && rankMode == mode) {
++                    grid.setSelectionFromTop(index, top);
++                }
++            }
++        });
++    }
++
+     /** 显示分类视图并把书库网格/各状态隐藏（分类页自己管理骨架/空/失败状态）。 */
+     private void showCategoriesMode() {
+         requestToken++;
+         loading = false;
+         Ui.display(loadingMore, false);
+-        if (adapter != null) {
+-            adapter.clear();
+-        }
++        // 不清理 adapter：保留热门/猜你喜欢的缓存数据，从分类切回热门时直接恢复、不重复请求。
+         Ui.display(grid, false);
+         Ui.display(skeleton, false);
+         Ui.display(emptyState, false);
+         Ui.display(errorState, false);
+         Ui.display(categoryView, true);
+         if (categoryView != null) {
++            // 分类视图自身保留层级与滚动位置；重新显示时把 L0/L1/L2 对应的顶栏状态同步给书库页。
+             categoryView.onShown();
+         }
+     }
+@@ -518,6 +586,25 @@
+         }
+     }
+ 
++    /**
++     * 分类视图钻取联动（L0 → 完整顶栏；L1/L2 → 紧凑顶栏）。
++     *
++     * @param compact true = 隐藏书库 26sp 标题与全库搜索框，仅保留 36dp 分段栏，
++     *                释放垂直空间并避免用户在分类内误用全库搜索
++     */
++    @Override
++    public void setChromeCompact(boolean compact) {
++        if (chromeCompact == compact) {
++            return;
++        }
++        chromeCompact = compact;
++        Ui.display(libraryTitle, !compact);
++        Ui.display(searchBox, !compact);
++        if (compact) {
++            hideKeyboard();
++        }
++    }
++
+     // =====================================================================
+     // 请求
+     // =====================================================================
+@@ -611,6 +698,7 @@
+                 } else {
+                     rankLoaded = true;
+                     rankError = false;
++                    cachedRankMode = requestMode;
+                     if (adapter == null || adapter.getCount() == 0) {
+                         showRankEmptyState();
+                     } else {
+diff -ruN a/app/src/main/res/color/language_chip_text.xml b/app/src/main/res/color/language_chip_text.xml
+--- a/app/src/main/res/color/language_chip_text.xml	1970-01-01 08:00:00.000000000 +0800
++++ b/app/src/main/res/color/language_chip_text.xml	2026-11-07 12:01:26.289861024 +0800
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 语言筛选胶囊文字颜色：选中主色、未选中次要墨色。 -->
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item
++        android:color="@color/primary"
++        android:state_selected="true" />
++    <item android:color="@color/ink_secondary" />
++</selector>
+diff -ruN a/app/src/main/res/drawable/bg_language_chip.xml b/app/src/main/res/drawable/bg_language_chip.xml
+--- a/app/src/main/res/drawable/bg_language_chip.xml	1970-01-01 08:00:00.000000000 +0800
++++ b/app/src/main/res/drawable/bg_language_chip.xml	2026-11-07 12:01:26.305861024 +0800
+@@ -0,0 +1,8 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 语言筛选胶囊背景：按 selected 状态切换选中/未选中形态。 -->
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item
++        android:drawable="@drawable/bg_language_chip_selected"
++        android:state_selected="true" />
++    <item android:drawable="@drawable/bg_language_chip_normal" />
++</selector>
+diff -ruN a/app/src/main/res/drawable/bg_language_chip_normal.xml b/app/src/main/res/drawable/bg_language_chip_normal.xml
+--- a/app/src/main/res/drawable/bg_language_chip_normal.xml	1970-01-01 08:00:00.000000000 +0800
++++ b/app/src/main/res/drawable/bg_language_chip_normal.xml	2026-11-07 12:01:26.305861024 +0800
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 语言筛选胶囊：未选中态（纸白底 + 分隔线描边，与顶部分段栏背景解耦）。 -->
++<shape xmlns:android="http://schemas.android.com/apk/res/android"
++    android:shape="rectangle">
++    <solid android:color="@color/paper" />
++    <corners android:radius="@dimen/radius_pill" />
++    <stroke
++        android:width="1dp"
++        android:color="@color/divider" />
++</shape>
+diff -ruN a/app/src/main/res/drawable/bg_language_chip_selected.xml b/app/src/main/res/drawable/bg_language_chip_selected.xml
+--- a/app/src/main/res/drawable/bg_language_chip_selected.xml	1970-01-01 08:00:00.000000000 +0800
++++ b/app/src/main/res/drawable/bg_language_chip_selected.xml	2026-11-07 12:01:26.305861024 +0800
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 语言筛选胶囊：选中态（浅主色底 + 主色描边 + 主色文字，字重由代码加粗）。 -->
++<shape xmlns:android="http://schemas.android.com/apk/res/android"
++    android:shape="rectangle">
++    <solid android:color="@color/selected_bg" />
++    <corners android:radius="@dimen/radius_pill" />
++    <stroke
++        android:width="1dp"
++        android:color="@color/primary" />
++</shape>
+diff -ruN a/app/src/main/res/drawable/bg_skeleton_card.xml b/app/src/main/res/drawable/bg_skeleton_card.xml
+--- a/app/src/main/res/drawable/bg_skeleton_card.xml	1970-01-01 08:00:00.000000000 +0800
++++ b/app/src/main/res/drawable/bg_skeleton_card.xml	2026-11-07 12:01:26.305861024 +0800
+@@ -0,0 +1,7 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 书单网格骨架卡片占位：分隔线色 + 与真实书卡一致的圆角。 -->
++<shape xmlns:android="http://schemas.android.com/apk/res/android"
++    android:shape="rectangle">
++    <solid android:color="@color/divider" />
++    <corners android:radius="@dimen/radius_card" />
++</shape>
+diff -ruN a/app/src/main/res/layout/row_language_chip.xml b/app/src/main/res/layout/row_language_chip.xml
+--- a/app/src/main/res/layout/row_language_chip.xml	1970-01-01 08:00:00.000000000 +0800
++++ b/app/src/main/res/layout/row_language_chip.xml	2026-11-07 12:01:26.293861024 +0800
+@@ -0,0 +1,23 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!-- 语言筛选 Chip：外层 48dp 触控热区 + 内层 32dp 视觉胶囊（触控热区达标）。 -->
++<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
++    android:layout_width="wrap_content"
++    android:layout_height="@dimen/chip_touch_height"
++    android:layout_marginEnd="@dimen/space_8"
++    android:background="?android:attr/selectableItemBackgroundBorderless"
++    android:clickable="true"
++    android:focusable="true">
++
++    <TextView
++        android:id="@+id/tv_language_chip"
++        style="@style/TextAppearance.ZL.Chip"
++        android:layout_width="wrap_content"
++        android:layout_height="@dimen/chip_height"
++        android:layout_gravity="center_vertical"
++        android:background="@drawable/bg_language_chip"
++        android:duplicateParentState="true"
++        android:gravity="center"
++        android:maxLines="1"
++        android:paddingStart="@dimen/chip_padding_h"
++        android:paddingEnd="@dimen/chip_padding_h" />
++</FrameLayout>
+diff -ruN a/app/src/main/res/layout/view_categories.xml b/app/src/main/res/layout/view_categories.xml
+--- a/app/src/main/res/layout/view_categories.xml	2026-11-07 12:01:26.233861024 +0800
++++ b/app/src/main/res/layout/view_categories.xml	2026-11-07 12:01:26.293861024 +0800
+@@ -1,5 +1,7 @@
+ <?xml version="1.0" encoding="utf-8"?>
+-<!-- 分类页：面包屑 + 标题 + 语言筛选 + 分类列表/书单网格（骨架/空/失败/加载更多）。 -->
++<!-- 分类页：固定高度面包屑 + 标题 + 语言筛选 + 分类列表/书单网格（双形态骨架/空/失败/加载与尾注）。
++     L0 一级分类目录：隐藏面包屑与标题，只保留副标题；
++     L1 二级分类列表 / L2 分类书单：显示 48dp 固定高度面包屑（‹ 全部分类 + / 一级分类）。 -->
+ <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+     android:id="@+id/ll_categories_root"
+     android:layout_width="match_parent"
+@@ -10,41 +12,43 @@
+     <LinearLayout
+         android:id="@+id/ll_cat_breadcrumb"
+         android:layout_width="match_parent"
+-        android:layout_height="wrap_content"
++        android:layout_height="@dimen/breadcrumb_height"
+         android:layout_marginStart="@dimen/space_12"
+         android:layout_marginTop="@dimen/space_4"
+         android:gravity="center_vertical"
+-        android:orientation="horizontal">
++        android:orientation="horizontal"
++        android:visibility="gone">
+ 
+         <TextView
+-            android:id="@+id/btn_cat_back"
++            android:id="@+id/btn_cat_back_root"
++            style="@style/TextAppearance.ZL.Breadcrumb"
+             android:layout_width="wrap_content"
+-            android:layout_height="@dimen/touch_min"
++            android:layout_height="wrap_content"
+             android:background="?android:attr/selectableItemBackgroundBorderless"
+             android:clickable="true"
+-            android:contentDescription="@string/category_back_desc"
++            android:contentDescription="@string/category_back_root_desc"
+             android:focusable="true"
+             android:gravity="center_vertical"
+             android:maxLines="1"
++            android:minHeight="@dimen/touch_min"
+             android:paddingStart="@dimen/space_8"
+             android:paddingEnd="@dimen/space_8"
+-            android:text="@string/category_back_root"
+-            android:textColor="@color/primary"
+-            android:textSize="14sp"
+-            android:visibility="gone" />
+-
+-        <View
+-            android:layout_width="0dp"
+-            android:layout_height="1dp"
+-            android:layout_weight="1" />
++            android:text="@string/category_back_root" />
+ 
+         <TextView
+-            android:id="@+id/tv_cat_source"
+-            style="@style/TextAppearance.ZL.Caption"
++            android:id="@+id/btn_cat_back_parent"
++            style="@style/TextAppearance.ZL.Breadcrumb"
+             android:layout_width="wrap_content"
+             android:layout_height="wrap_content"
+-            android:layout_marginEnd="@dimen/screen_margin"
+-            android:text="@string/category_source_label" />
++            android:background="?android:attr/selectableItemBackgroundBorderless"
++            android:clickable="true"
++            android:focusable="true"
++            android:gravity="center_vertical"
++            android:maxLines="1"
++            android:minHeight="@dimen/touch_min"
++            android:paddingStart="@dimen/space_8"
++            android:paddingEnd="@dimen/space_8"
++            android:visibility="gone" />
+     </LinearLayout>
+ 
+     <TextView
+@@ -65,7 +69,7 @@
+         android:layout_width="match_parent"
+         android:layout_height="wrap_content"
+         android:layout_marginStart="@dimen/screen_margin"
+-        android:layout_marginTop="2dp"
++        android:layout_marginTop="@dimen/space_8"
+         android:layout_marginEnd="@dimen/screen_margin"
+         android:ellipsize="end"
+         android:maxLines="2"
+@@ -75,8 +79,10 @@
+         android:id="@+id/hsv_cat_languages"
+         android:layout_width="match_parent"
+         android:layout_height="wrap_content"
+-        android:layout_marginTop="@dimen/space_8"
++        android:layout_marginTop="@dimen/space_4"
+         android:clipToPadding="false"
++        android:gravity="center_vertical"
++        android:minHeight="@dimen/chip_touch_height"
+         android:paddingStart="@dimen/screen_margin"
+         android:paddingEnd="@dimen/screen_margin"
+         android:scrollbars="none"
+@@ -87,6 +93,7 @@
+             android:layout_width="wrap_content"
+             android:layout_height="wrap_content"
+             android:gravity="center_vertical"
++            android:minHeight="@dimen/chip_touch_height"
+             android:orientation="horizontal" />
+     </HorizontalScrollView>
+ 
+@@ -128,7 +135,7 @@
+             android:verticalSpacing="@dimen/space_12"
+             android:visibility="gone" />
+ 
+-        <!-- 骨架：分类目录/书单首次加载时显示。 -->
++        <!-- 骨架：容器只负责整体显隐，内部按层级切换列表/网格两种形态。 -->
+         <LinearLayout
+             android:id="@+id/ll_cat_skeleton"
+             android:layout_width="match_parent"
+@@ -139,31 +146,87 @@
+             android:orientation="vertical"
+             android:visibility="gone">
+ 
+-            <View
+-                android:layout_width="match_parent"
+-                android:layout_height="56dp"
+-                android:background="@drawable/bg_skeleton" />
+-
+-            <View
++            <!-- 列表骨架：L0 一级分类目录加载分类树时显示（4 条 60dp 横条）。 -->
++            <LinearLayout
++                android:id="@+id/ll_cat_skeleton_list"
+                 android:layout_width="match_parent"
+-                android:layout_height="56dp"
+-                android:layout_marginTop="@dimen/space_8"
+-                android:background="@drawable/bg_skeleton" />
++                android:layout_height="wrap_content"
++                android:orientation="vertical">
+ 
+-            <View
++                <View
++                    android:layout_width="match_parent"
++                    android:layout_height="@dimen/skeleton_row_height"
++                    android:background="@drawable/bg_skeleton" />
++
++                <View
++                    android:layout_width="match_parent"
++                    android:layout_height="@dimen/skeleton_row_height"
++                    android:layout_marginTop="@dimen/space_8"
++                    android:background="@drawable/bg_skeleton" />
++
++                <View
++                    android:layout_width="match_parent"
++                    android:layout_height="@dimen/skeleton_row_height"
++                    android:layout_marginTop="@dimen/space_8"
++                    android:background="@drawable/bg_skeleton" />
++
++                <View
++                    android:layout_width="match_parent"
++                    android:layout_height="@dimen/skeleton_row_height"
++                    android:layout_marginTop="@dimen/space_8"
++                    android:background="@drawable/bg_skeleton" />
++            </LinearLayout>
++
++            <!-- 网格骨架：L2 分类书单首次加载时显示（2 行 × 2 列，与书封网格同构）。 -->
++            <LinearLayout
++                android:id="@+id/ll_cat_skeleton_grid"
+                 android:layout_width="match_parent"
+-                android:layout_height="56dp"
+-                android:layout_marginTop="@dimen/space_8"
+-                android:background="@drawable/bg_skeleton" />
++                android:layout_height="wrap_content"
++                android:orientation="vertical"
++                android:visibility="gone">
+ 
+-            <View
+-                android:layout_width="match_parent"
+-                android:layout_height="56dp"
+-                android:layout_marginTop="@dimen/space_8"
+-                android:background="@drawable/bg_skeleton" />
++                <LinearLayout
++                    android:layout_width="match_parent"
++                    android:layout_height="@dimen/skeleton_card_height"
++                    android:orientation="horizontal">
++
++                    <View
++                        android:layout_width="0dp"
++                        android:layout_height="match_parent"
++                        android:layout_weight="1"
++                        android:background="@drawable/bg_skeleton_card" />
++
++                    <View
++                        android:layout_width="0dp"
++                        android:layout_height="match_parent"
++                        android:layout_marginStart="@dimen/space_12"
++                        android:layout_weight="1"
++                        android:background="@drawable/bg_skeleton_card" />
++                </LinearLayout>
++
++                <LinearLayout
++                    android:layout_width="match_parent"
++                    android:layout_height="@dimen/skeleton_card_height"
++                    android:layout_marginTop="@dimen/space_12"
++                    android:orientation="horizontal">
++
++                    <View
++                        android:layout_width="0dp"
++                        android:layout_height="match_parent"
++                        android:layout_weight="1"
++                        android:background="@drawable/bg_skeleton_card" />
++
++                    <View
++                        android:layout_width="0dp"
++                        android:layout_height="match_parent"
++                        android:layout_marginStart="@dimen/space_12"
++                        android:layout_weight="1"
++                        android:background="@drawable/bg_skeleton_card" />
++                </LinearLayout>
++            </LinearLayout>
+         </LinearLayout>
+ 
+-        <!-- 空态：当前分类/语言没有结果（与失败态区分）。 -->
++        <!-- 空态：当前分类/语言没有结果（与失败态区分；按钮由代码在「全部语言」/「刷新」间切换）。 -->
+         <LinearLayout
+             android:id="@+id/ll_cat_empty"
+             android:layout_width="match_parent"
+@@ -257,6 +320,7 @@
+                 android:text="@string/action_retry" />
+         </LinearLayout>
+ 
++        <!-- 底部提示：加载更多 / 切换语言中 / 分页结束（文案由代码切换）。 -->
+         <TextView
+             android:id="@+id/tv_cat_loading_more"
+             style="@style/TextAppearance.ZL.Caption"
+@@ -264,6 +328,7 @@
+             android:layout_height="wrap_content"
+             android:layout_gravity="bottom|center_horizontal"
+             android:gravity="center"
++            android:maxLines="2"
+             android:padding="@dimen/space_12"
+             android:text="@string/loading_more"
+             android:visibility="gone" />
+diff -ruN a/app/src/main/res/values/dimens.xml b/app/src/main/res/values/dimens.xml
+--- a/app/src/main/res/values/dimens.xml	2026-11-07 12:01:26.229861024 +0800
++++ b/app/src/main/res/values/dimens.xml	2026-11-07 12:01:26.289861024 +0800
+@@ -12,7 +12,15 @@
+     <dimen name="radius_card">16dp</dimen>
+     <dimen name="radius_control">12dp</dimen>
+     <dimen name="radius_chip">8dp</dimen>
++    <dimen name="radius_pill">16dp</dimen>
+     <dimen name="touch_min">48dp</dimen>
++    <!-- 分类模块 -->
++    <dimen name="breadcrumb_height">48dp</dimen>
++    <dimen name="chip_touch_height">48dp</dimen>
++    <dimen name="chip_height">32dp</dimen>
++    <dimen name="chip_padding_h">14dp</dimen>
++    <dimen name="skeleton_row_height">60dp</dimen>
++    <dimen name="skeleton_card_height">220dp</dimen>
+     <dimen name="nav_height">64dp</dimen>
+     <dimen name="icon_nav">22dp</dimen>
+     <dimen name="icon_action">20dp</dimen>
+diff -ruN a/app/src/main/res/values/strings.xml b/app/src/main/res/values/strings.xml
+--- a/app/src/main/res/values/strings.xml	2026-11-07 12:01:26.229861024 +0800
++++ b/app/src/main/res/values/strings.xml	2026-11-07 12:01:26.289861024 +0800
+@@ -33,18 +33,25 @@
+     <string name="segment_liked">猜你喜欢</string>
+     <!-- 分类：数据来自网页分类目录（服务端渲染 HTML），不是 /eapi；状态必须区分空/失败/验证/改版。 -->
+     <string name="category_root_title">分类</string>
+-    <string name="category_root_subtitle">共 %1$d 个一级分类 · 数据来自网页分类目录；部分书籍尚未分类，可通过搜索查找。</string>
+-    <string name="category_source_label">网页分类目录</string>
++    <string name="category_root_subtitle">共 %1$d 个一级分类 · 部分未分类书籍可通过顶部搜索查找</string>
+     <string name="category_back_root">‹ 全部分类</string>
+-    <string name="category_back_parent">‹ %1$s</string>
+-    <string name="category_back_desc">返回上一级分类</string>
++    <string name="category_back_parent">/ %1$s</string>
++    <string name="category_back_root_desc">返回全部分类目录</string>
++    <string name="category_back_parent_desc">返回该一级分类</string>
+     <string name="category_children_short">%1$d 类</string>
+     <string name="category_books_count">%1$d 本</string>
+     <string name="category_all_books">全部</string>
++    <string name="category_all_title">%1$s · 全部</string>
++    <string name="category_browse_all">浏览全部 · %1$s</string>
++    <string name="category_browse_all_subtitle">查看该分类下全部汇总书单</string>
++    <string name="category_type_fiction">虚构类</string>
++    <string name="category_type_non_fiction">非虚构类</string>
+     <string name="category_children_subtitle">原名：%1$s · 共 %2$d 个二级分类</string>
+     <string name="category_children_subtitle_plain">共 %1$d 个二级分类</string>
+     <string name="category_books_page_status">第 %1$d/%2$d 页 · 已加载 %3$d 本</string>
+     <string name="category_loading_books">正在加载分类书单…</string>
++    <string name="category_switching_language">正在切换语言筛选…</string>
++    <string name="category_end_hint">已展示该分类前 %1$d 本精选藏书 · 更多书籍请使用顶部搜索</string>
+     <string name="category_empty_title">当前条件没有结果</string>
+     <string name="category_empty_desc">可以换个分类或语言试试；部分书籍尚未分类，可通过搜索查找。</string>
+     <string name="category_empty_desc_plain">这个分类暂时没有可展示的书；部分书籍尚未分类，可通过搜索查找。</string>
+@@ -56,7 +63,7 @@
+     <string name="category_error_not_found">这个分类在网站上不存在或已调整。</string>
+     <string name="category_error_parse">页面结构变化：暂时无法解析分类页面，请稍后重试。</string>
+     <string name="category_error_unknown">分类加载失败，请稍后重试。</string>
+-    <string name="category_mapping_loading">正在匹配书籍详情…</string>
++    <string name="category_mapping_dialog_message">正在匹配应用内书籍详情…</string>
+     <string name="category_web_detail_title">网页详情</string>
+     <string name="category_web_detail_message">该书籍暂时无法在应用内打开原生详情，可在浏览器查看网页详情。</string>
+     <string name="category_open_web">在浏览器打开</string>
+diff -ruN a/app/src/main/res/values/styles.xml b/app/src/main/res/values/styles.xml
+--- a/app/src/main/res/values/styles.xml	2026-11-07 12:01:26.233861024 +0800
++++ b/app/src/main/res/values/styles.xml	2026-11-07 12:01:26.289861024 +0800
+@@ -22,6 +22,16 @@
+         <item name="android:textSize">12sp</item>
+         <item name="android:textColor">@color/ink_secondary</item>
+     </style>
++    <!-- 分类面包屑：可点击的主色文字，字号/颜色统一走 token。 -->
++    <style name="TextAppearance.ZL.Breadcrumb" parent="@android:style/TextAppearance.Material">
++        <item name="android:textSize">14sp</item>
++        <item name="android:textColor">@color/primary</item>
++    </style>
++    <!-- 语言筛选胶囊：文字颜色随选中态切换（选中主色 / 未选中次要墨色）。 -->
++    <style name="TextAppearance.ZL.Chip" parent="@android:style/TextAppearance.Material">
++        <item name="android:textSize">14sp</item>
++        <item name="android:textColor">@color/language_chip_text</item>
++    </style>
+     <style name="Widget.ZL.Card" parent="">
+         <item name="android:background">@drawable/bg_card</item>
+         <item name="android:padding">@dimen/space_16</item>
+diff -ruN a/tools/build.sh b/tools/build.sh
+--- a/tools/build.sh	2026-11-07 12:01:26.257861024 +0800
++++ b/tools/build.sh	2026-11-07 12:01:26.317861024 +0800
+@@ -34,7 +34,7 @@
+   -R "$OUT/res.zip" \
+   --java "$OUT/gen" \
+   --min-sdk-version 21 --target-sdk-version 33 \
+-  --version-code 7 --version-name "1.2.0" \
++  --version-code 8 --version-name "1.2.1" \
+   --auto-add-overlay
+ 
+ echo "[3/6] javac"

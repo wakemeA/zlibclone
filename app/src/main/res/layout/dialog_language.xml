@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/screen_margin"
+    android:paddingTop="@dimen/space_8"
+    android:paddingEnd="@dimen/screen_margin">
+
+    <TextView
+        android:id="@+id/tv_dialog_language_desc"
+        style="@style/TextAppearance.ZL.BodySecondary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/setting_language_desc" />
+
+    <RadioGroup
+        android:id="@+id/rg_dialog_language"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_8"
+        android:orientation="vertical">
+
+        <RadioButton
+            android:id="@+id/rb_lang_en"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_min"
+            android:buttonTint="@color/primary"
+            android:text="en"
+            android:textSize="15sp" />
+
+        <RadioButton
+            android:id="@+id/rb_lang_zh"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_min"
+            android:buttonTint="@color/primary"
+            android:text="zh"
+            android:textSize="15sp" />
+
+        <RadioButton
+            android:id="@+id/rb_lang_ru"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_min"
+            android:buttonTint="@color/primary"
+            android:text="ru"
+            android:textSize="15sp" />
+
+        <RadioButton
+            android:id="@+id/rb_lang_es"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_min"
+            android:buttonTint="@color/primary"
+            android:text="es"
+            android:textSize="15sp" />
+
+        <RadioButton
+            android:id="@+id/rb_lang_fr"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_min"
+            android:buttonTint="@color/primary"
+            android:text="fr"
+            android:textSize="15sp" />
+
+        <RadioButton
+            android:id="@+id/rb_lang_de"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/touch_min"
+            android:buttonTint="@color/primary"
+            android:text="de"
+            android:textSize="15sp" />
+    </RadioGroup>
+</LinearLayout>

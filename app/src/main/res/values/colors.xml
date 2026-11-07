@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 暖纸白 + 墨绿：全局唯一色板，页面里不要再写死颜色 -->
+    <color name="paper">#FFFAF8F3</color>
+    <color name="card">#FFFFFFFF</color>
+    <color name="ink">#FF222822</color>
+    <color name="ink_secondary">#FF5F685F</color>
+    <color name="primary">#FF2F5D4D</color>
+    <color name="primary_pressed">#FF264A3D</color>
+    <color name="selected_bg">#FFE8F0EA</color>
+    <color name="divider">#FFE6E2D8</color>
+    <color name="danger">#FFB3564A</color>
+    <color name="skeleton">#FFEFEAE0</color>
+    <color name="cover_placeholder">#FFEDE8DC</color>
+    <color name="on_primary">#FFFFFFFF</color>
+    <color name="transparent">#00000000</color>
+</resources>
