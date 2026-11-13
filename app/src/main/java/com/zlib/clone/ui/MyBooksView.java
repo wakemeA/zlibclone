@@ -48,6 +48,7 @@ public class MyBooksView extends FrameLayout {
     private View errorView;
     private TextView errorDesc;
     private TextView loadingMore;
+    private View loadMoreRetry;
 
     private BookListAdapter adapter;
 
@@ -57,6 +58,8 @@ public class MyBooksView extends FrameLayout {
     private boolean hasMore = true;
     private boolean loadedOnce;
     private boolean loadFailed;
+    /** 分页失败不代表末页；此标记仅暂停自动加载，等待用户显式重试。 */
+    private boolean loadMoreFailed;
     private int requestToken;
     /** 从详情页收藏/下载后回到 Main 需要刷新书单。 */
     private boolean dirty = true;
@@ -84,6 +87,13 @@ public class MyBooksView extends FrameLayout {
         errorView = findViewById(R.id.ll_mybooks_error);
         errorDesc = (TextView) findViewById(R.id.tv_mybooks_error_desc);
         loadingMore = (TextView) findViewById(R.id.tv_mybooks_loading_more);
+        loadMoreRetry = findViewById(R.id.btn_mybooks_load_more_retry);
+        loadMoreRetry.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                retryLoadMore();
+            }
+        });
 
         adapter = new BookListAdapter(context, new BookListAdapter.OnMoreClickListener() {
             @Override
@@ -117,7 +127,7 @@ public class MyBooksView extends FrameLayout {
                 @Override
                 public void onScroll(AbsListView view, int firstVisibleItem, int visibleItemCount,
                                      int totalItemCount) {
-                    if (loading || !hasMore || totalItemCount <= 0) {
+                    if (loading || loadMoreFailed || !hasMore || totalItemCount <= 0) {
                         return;
                     }
                     if (firstVisibleItem + visibleItemCount + LOAD_MORE_THRESHOLD >= totalItemCount) {
@@ -205,8 +215,15 @@ public class MyBooksView extends FrameLayout {
         }
     }
 
+    private void retryLoadMore() {
+        if (!loading && loadMoreFailed) {
+            loadMoreFailed = false;
+            loadPage(page + 1, false);
+        }
+    }
+
     private void loadPage(final int targetPage, final boolean reset) {
-        if (loading && !reset) {
+        if (!reset && (loading || loadMoreFailed || !hasMore)) {
             return;
         }
         final int token = ++requestToken;
@@ -215,6 +232,7 @@ public class MyBooksView extends FrameLayout {
             page = 0;
             hasMore = true;
             loadFailed = false;
+            loadMoreFailed = false;
             adapter.clear();
         }
         syncState();
@@ -238,18 +256,17 @@ public class MyBooksView extends FrameLayout {
                 }
                 loading = false;
                 Activity activity = activity();
-                if (activity == null || activity.isFinishing()) {
+                if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
                     return;
                 }
                 if (result == null) {
-                    hasMore = false;
-                    loadFailed = adapter.isEmpty();
-                    syncState();
+                    showPageFailure(getContext().getString(R.string.mybooks_error_title));
                     return;
                 }
                 page = result.current > 0 ? result.current : requestPage;
                 hasMore = result.hasMore();
                 loadFailed = false;
+                loadMoreFailed = false;
                 List<Book> items = result.items;
                 if (items != null && !items.isEmpty()) {
                     adapter.addItems(items);
@@ -264,29 +281,35 @@ public class MyBooksView extends FrameLayout {
                 }
                 loading = false;
                 Activity activity = activity();
-                if (activity == null || activity.isFinishing()) {
+                if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
                     return;
                 }
-                hasMore = false;
                 if (Ui.handleAuthError(activity, e)) {
                     return;
                 }
-                if (adapter.isEmpty()) {
-                    loadFailed = true;
-                    if (errorDesc != null) {
-                        errorDesc.setText(Ui.errorText(e));
-                    }
-                } else {
-                    Ui.toast(getContext(), Ui.errorText(e));
-                }
-                syncState();
+                showPageFailure(Ui.errorText(e));
             }
         });
     }
 
+    private void showPageFailure(String message) {
+        // page 仍是最后成功页；只有成功响应的 hasMore() 才能判定末页。
+        hasMore = true;
+        loadFailed = adapter.isEmpty();
+        loadMoreFailed = !loadFailed;
+        if (loadFailed) {
+            if (errorDesc != null) {
+                errorDesc.setText(message);
+            }
+        } else {
+            Ui.toast(getContext(), message);
+        }
+        syncState();
+    }
+
     private void syncState() {
         Activity activity = activity();
-        if (activity == null || activity.isFinishing()) {
+        if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
             return;
         }
         boolean empty = adapter.isEmpty();
@@ -295,6 +318,11 @@ public class MyBooksView extends FrameLayout {
         Ui.display(emptyView, loadedOnce && !loading && !loadFailed && empty);
         Ui.display(errorView, loadedOnce && !loading && loadFailed && empty);
         Ui.display(loadingMore, loading && !empty && hasMore);
+        // 即使请求期间最后一项被移除，也保留显式续页重试入口。
+        Ui.display(loadMoreRetry, !loading && loadMoreFailed);
+        if (loadMoreRetry != null) {
+            loadMoreRetry.setEnabled(!loading && loadMoreFailed);
+        }
         updateEmptyTexts();
     }
 
@@ -312,7 +340,7 @@ public class MyBooksView extends FrameLayout {
 
     private void showItemMenu(final Book book) {
         final Activity activity = activity();
-        if (book == null || activity == null || activity.isFinishing()) {
+        if (book == null || activity == null || activity.isFinishing() || activity.isDestroyed()) {
             return;
         }
         final boolean downloadedMode = MODE_DOWNLOADED.equals(mode);
@@ -334,7 +362,7 @@ public class MyBooksView extends FrameLayout {
 
     private void confirmRemove(final Book book, final boolean downloadedMode) {
         final Activity activity = activity();
-        if (book == null || activity == null || activity.isFinishing()) {
+        if (book == null || activity == null || activity.isFinishing() || activity.isDestroyed()) {
             return;
         }
         int titleRes = downloadedMode
@@ -369,7 +397,7 @@ public class MyBooksView extends FrameLayout {
             @Override
             public void ok(Boolean value) {
                 Activity activity = activity();
-                if (activity == null || activity.isFinishing()) {
+                if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
                     return;
                 }
                 adapter.remove(book);
@@ -380,7 +408,7 @@ public class MyBooksView extends FrameLayout {
             @Override
             public void err(Exception e) {
                 Activity activity = activity();
-                if (activity == null || activity.isFinishing()) {
+                if (activity == null || activity.isFinishing() || activity.isDestroyed()) {
                     return;
                 }
                 if (Ui.handleAuthError(activity, e)) {

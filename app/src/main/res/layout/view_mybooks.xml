@@ -312,15 +312,29 @@
                 android:text="@string/action_retry" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/tv_mybooks_loading_more"
-            style="@style/TextAppearance.ZL.Caption"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom"
-            android:gravity="center"
-            android:padding="@dimen/space_12"
-            android:text="@string/loading_more"
-            android:visibility="gone" />
     </FrameLayout>
+
+    <!-- 反馈栏占独立空间，不覆盖最后一行，也不改变 ListView 的条目索引。 -->
+    <TextView
+        android:id="@+id/tv_mybooks_loading_more"
+        style="@style/TextAppearance.ZL.Caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="@dimen/space_12"
+        android:text="@string/loading_more"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/btn_mybooks_load_more_retry"
+        style="@style/Widget.ZL.GhostButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/screen_margin"
+        android:layout_marginEnd="@dimen/screen_margin"
+        android:layout_marginBottom="@dimen/space_8"
+        android:minHeight="@dimen/touch_min"
+        android:text="@string/mybooks_more_retry"
+        android:textAllCaps="false"
+        android:visibility="gone" />
 </LinearLayout>

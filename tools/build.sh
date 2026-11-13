@@ -6,6 +6,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SDK="${ANDROID_HOME:-/opt/android-sdk}"
 BT="$SDK/build-tools/33.0.2"
+D8="${D8_BIN:-$BT/d8}"
 AAPT2="${AAPT2_BIN:-/usr/bin/aapt2}"
 ZIPALIGN="${ZIPALIGN_BIN:-/usr/bin/zipalign}"
 APKSIGNER="${APKSIGNER_BIN:-/usr/bin/apksigner}"
@@ -16,7 +17,7 @@ APK_NAME="ZLibClone.apk"
 KS="$ROOT/tools/zlibclone.jks"
 KS_PASS="zlibclone"
 
-for f in "$AAPT2" "$BT/d8" "$ZIPALIGN" "$APKSIGNER" "$PLATFORM"; do
+for f in "$AAPT2" "$D8" "$ZIPALIGN" "$APKSIGNER" "$PLATFORM"; do
   [ -e "$f" ] || { echo "缺少构建工具: $f"; exit 1; }
 done
 
@@ -34,7 +35,7 @@ echo "[2/6] aapt2 link"
   -R "$OUT/res.zip" \
   --java "$OUT/gen" \
   --min-sdk-version 21 --target-sdk-version 33 \
-  --version-code 8 --version-name "1.2.1" \
+  --version-code 9 --version-name "1.2.2" \
   --auto-add-overlay
 
 echo "[3/6] javac"
@@ -48,7 +49,7 @@ grep -v "bootstrap class path" "$OUT/javac.log" || true
 
 echo "[4/6] d8 dex"
 find "$OUT/classes" -name '*.class' | sort > "$OUT/classes.txt"
-"$BT/d8" --lib "$PLATFORM" --min-api 21 --output "$OUT/dex" @"$OUT/classes.txt"
+"$D8" --lib "$PLATFORM" --min-api 21 --output "$OUT/dex" @"$OUT/classes.txt"
 
 echo "[5/6] package"
 cp "$OUT/base.apk" "$OUT/unsigned.apk"

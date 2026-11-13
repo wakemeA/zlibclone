@@ -333,12 +333,13 @@ public class CategoryView extends FrameLayout {
         }, new Task.Ok<WebCategorySource.Tree>() {
             @Override
             public void ok(WebCategorySource.Tree tree) {
-                if (token != requestToken) {
+                if (token != requestToken
+                        || (level != LEVEL_ROOT && level != LEVEL_CHILDREN)) {
                     return;
                 }
                 loading = false;
                 Activity activity = hostActivity();
-                if (activity != null && activity.isFinishing()) {
+                if (activity != null && (activity.isFinishing() || activity.isDestroyed())) {
                     return;
                 }
                 if (tree == null || tree.roots.isEmpty()) {
@@ -353,13 +354,15 @@ public class CategoryView extends FrameLayout {
         }, new Task.Err() {
             @Override
             public void err(Exception e) {
-                if (token != requestToken || level != LEVEL_BOOKS) {
+                // 目录请求属于 L0/L1，不是 L2 书单；过期响应仍必须丢弃。
+                if (token != requestToken
+                        || (level != LEVEL_ROOT && level != LEVEL_CHILDREN)) {
                     return;
                 }
                 loading = false;
                 lastFailureServerSide = isServerSideFailure(e);
                 Activity activity = hostActivity();
-                if (activity != null && activity.isFinishing()) {
+                if (activity != null && (activity.isFinishing() || activity.isDestroyed())) {
                     return;
                 }
                 showErrorState(categoryErrorMessage(e));
@@ -550,7 +553,7 @@ public class CategoryView extends FrameLayout {
                 }
                 loading = false;
                 Activity activity = hostActivity();
-                if (activity != null && activity.isFinishing()) {
+                if (activity != null && (activity.isFinishing() || activity.isDestroyed())) {
                     return;
                 }
                 Ui.display(skeleton, false);
@@ -591,7 +594,7 @@ public class CategoryView extends FrameLayout {
                 loading = false;
                 lastFailureServerSide = isServerSideFailure(e);
                 Activity activity = hostActivity();
-                if (activity != null && activity.isFinishing()) {
+                if (activity != null && (activity.isFinishing() || activity.isDestroyed())) {
                     return;
                 }
                 Ui.display(skeleton, false);
@@ -977,6 +980,8 @@ public class CategoryView extends FrameLayout {
             retryCurrent();
             return;
         }
+        final int token = ++requestToken;
+        loading = true;
         if (errorRetry != null) {
             errorRetry.setEnabled(false);
         }
@@ -991,6 +996,12 @@ public class CategoryView extends FrameLayout {
         }, new Task.Ok<String>() {
             @Override
             public void ok(String base) {
+                Activity activity = hostActivity();
+                if (token != requestToken || activity == null
+                        || activity.isFinishing() || activity.isDestroyed()) {
+                    return;
+                }
+                loading = false;
                 if (errorRetry != null) {
                     errorRetry.setEnabled(true);
                 }
@@ -1010,6 +1021,12 @@ public class CategoryView extends FrameLayout {
         }, new Task.Err() {
             @Override
             public void err(Exception e) {
+                Activity activity = hostActivity();
+                if (token != requestToken || activity == null
+                        || activity.isFinishing() || activity.isDestroyed()) {
+                    return;
+                }
+                loading = false;
                 if (errorRetry != null) {
                     errorRetry.setEnabled(true);
                 }

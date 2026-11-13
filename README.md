@@ -66,12 +66,23 @@ export ANDROID_HOME=/path/to/android-sdk
 bash tools/build.sh
 ```
 
-产物为 `build/ZLibClone.apk`（本地生成，不提交到仓库）。脚本默认从 `/usr/bin` 加载 `aapt2`、`zipalign` 和 `apksigner`，可通过 `AAPT2_BIN`、`ZIPALIGN_BIN`、`APKSIGNER_BIN` 指定其他位置。ARM64 主机需使用对应架构的可执行工具。
+产物为 `build/ZLibClone.apk`（本地生成，不提交到仓库）。脚本默认从 `/usr/bin` 加载 `aapt2`、`zipalign` 和 `apksigner`，可通过 `AAPT2_BIN`、`ZIPALIGN_BIN`、`APKSIGNER_BIN` 指定其他位置；`D8_BIN` 可覆盖默认的 SDK Build Tools D8 路径。ARM64 主机需使用对应架构的可执行工具。
 
 首次构建会生成本地开发签名，仅用于开发测试。签名密钥已加入忽略规则，请自行妥善保管；正式分发应使用自己的安全签名配置。
 
+### 离线回归测试
+
+需要 Python 3 和可用的 `java` / `javac`，无需真实账号或网络服务：
+
+```bash
+python3 tools/test_batch1.py
+```
+
+测试从生产源码提取方法体，用确定性的 JVM 测试替身验证异常恢复与请求状态；它不替代 Android 真机、系统弹窗、下载或真实接口测试。
+
 ## 开发文档
 
+- [更新记录与验证范围](<CHANGELOG.md>)
 - [技术说明与历史验证记录](<TECHNICAL_NOTES.md>)
 - [接口与模块约定](<SPEC.md>) · [界面设计](<DESIGN_UI.md>)
 - [分类交互逻辑](<分类UI设计逻辑说明.md>) · [分类改版记录](<分类UI改造-变更说明.md>)

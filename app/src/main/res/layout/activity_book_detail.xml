@@ -73,6 +73,42 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="@dimen/space_4" />
 
+            <ProgressBar
+                android:id="@+id/pb_detail"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="@dimen/space_16"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:id="@+id/ll_detail_error"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_16"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/tv_detail_error"
+                    style="@style/TextAppearance.ZL.BodySecondary"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:accessibilityLiveRegion="polite"
+                    android:textColor="@color/danger" />
+
+                <Button
+                    android:id="@+id/btn_detail_retry"
+                    style="@style/Widget.ZL.GhostButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_8"
+                    android:minHeight="@dimen/touch_min"
+                    android:text="@string/detail_retry"
+                    android:textAllCaps="false" />
+            </LinearLayout>
+
             <TextView
                 android:id="@+id/tv_detail_meta"
                 style="@style/TextAppearance.ZL.Caption"
@@ -134,13 +170,13 @@
                 android:layout_marginTop="@dimen/space_12"
                 android:text="@string/read_online" />
 
-            <ProgressBar
-                android:id="@+id/pb_detail"
-                style="?android:attr/progressBarStyleSmall"
-                android:layout_width="wrap_content"
+            <TextView
+                android:id="@+id/tv_detail_read_reason"
+                style="@style/TextAppearance.ZL.BodySecondary"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:layout_marginTop="@dimen/space_16"
+                android:layout_marginTop="@dimen/space_8"
+                android:accessibilityLiveRegion="polite"
                 android:visibility="gone" />
         </LinearLayout>
     </ScrollView>

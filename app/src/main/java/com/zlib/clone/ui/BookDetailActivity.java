@@ -60,6 +60,15 @@ public class BookDetailActivity extends Activity {
     private TextView downloadButton;
     private TextView readButton;
     private ProgressBar progressBar;
+    private View detailError;
+    private TextView detailErrorText;
+    private View detailRetry;
+    private TextView readReason;
+    private boolean detailLoading;
+    private int detailRequestToken;
+    /** 从格式请求到弹窗选择、下载地址请求全程防止重复点击。 */
+    private boolean downloadBusy;
+    private AlertDialog downloadDialog;
 
     /** 从列表打开详情页的便捷方法。 */
     public static void open(Context context, Book book) {
@@ -95,6 +104,16 @@ public class BookDetailActivity extends Activity {
         downloadButton = (TextView) findViewById(R.id.btn_detail_download);
         readButton = (TextView) findViewById(R.id.btn_detail_read);
         progressBar = (ProgressBar) findViewById(R.id.pb_detail);
+        detailError = findViewById(R.id.ll_detail_error);
+        detailErrorText = (TextView) findViewById(R.id.tv_detail_error);
+        detailRetry = findViewById(R.id.btn_detail_retry);
+        readReason = (TextView) findViewById(R.id.tv_detail_read_reason);
+        detailRetry.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                loadBook();
+            }
+        });
 
         View backButton = findViewById(R.id.btn_detail_back);
         if (backButton != null) {
@@ -155,6 +174,14 @@ public class BookDetailActivity extends Activity {
     }
 
     private void loadBook() {
+        if (detailLoading || isFinishing() || isDestroyed()) {
+            return;
+        }
+        final int token = ++detailRequestToken;
+        detailLoading = true;
+        Ui.display(detailError, false);
+        detailRetry.setEnabled(false);
+        updateDetailActions();
         Ui.display(progressBar, true);
         Task.run(new Task.Job<Book>() {
             @Override
@@ -164,26 +191,63 @@ public class BookDetailActivity extends Activity {
         }, new Task.Ok<Book>() {
             @Override
             public void ok(Book result) {
-                if (isFinishing()) {
+                if (token != detailRequestToken || isFinishing() || isDestroyed()) {
                     return;
                 }
+                detailLoading = false;
                 Ui.display(progressBar, false);
                 if (result == null) {
-                    Ui.toast(BookDetailActivity.this, "书籍信息加载失败");
+                    showDetailError(getString(R.string.detail_load_failed));
                     return;
                 }
+                Ui.display(detailError, false);
                 bind(result);
             }
         }, new Task.Err() {
             @Override
             public void err(Exception e) {
-                if (isFinishing()) {
+                if (token != detailRequestToken || isFinishing() || isDestroyed()) {
                     return;
                 }
+                detailLoading = false;
                 Ui.display(progressBar, false);
-                Ui.toast(BookDetailActivity.this, Ui.errorText(e));
+                if (Ui.handleAuthError(BookDetailActivity.this, e)) {
+                    return;
+                }
+                showDetailError(Ui.errorText(e));
             }
         });
+    }
+
+    private void showDetailError(String message) {
+        detailErrorText.setText(message);
+        detailRetry.setEnabled(true);
+        Ui.display(detailError, true);
+        updateDetailActions();
+    }
+
+    private void updateDetailActions() {
+        boolean ready = book != null && !detailLoading;
+        saveButton.setEnabled(ready);
+        downloadButton.setEnabled(ready && !downloadBusy);
+        boolean readable = ready && book.readOnlineAvailable
+                && book.readOnlineUrl != null && book.readOnlineUrl.trim().length() > 0;
+        readButton.setEnabled(readable);
+        // 本批仅局部修复不可读的视觉提示；全局 disabled selector 留到 Batch 3。
+        readButton.setBackgroundResource(readable
+                ? R.drawable.bg_primary_button : R.drawable.bg_skeleton);
+        readButton.setTextColor(getResources().getColor(readable
+                ? R.color.on_primary : R.color.ink_secondary));
+        Ui.display(readReason, ready && !readable);
+        if (ready && !readable) {
+            readReason.setText(book.readOnlineAvailable
+                    ? R.string.read_online_missing : R.string.read_online_unavailable);
+        }
+    }
+
+    private void setDownloadBusy(boolean busy) {
+        downloadBusy = busy;
+        downloadButton.setEnabled(book != null && !detailLoading && !busy);
     }
 
     private void bind(Book value) {
@@ -205,6 +269,7 @@ public class BookDetailActivity extends Activity {
         }
         ImageLoader.get().load(value.cover, coverView);
         updateSaveButton();
+        updateDetailActions();
     }
 
     private static void appendMeta(StringBuilder sb, String label, String value) {
@@ -240,7 +305,7 @@ public class BookDetailActivity extends Activity {
         }, new Task.Ok<Boolean>() {
             @Override
             public void ok(Boolean result) {
-                if (isFinishing()) {
+                if (isFinishing() || isDestroyed()) {
                     return;
                 }
                 saveButton.setEnabled(true);
@@ -253,16 +318,22 @@ public class BookDetailActivity extends Activity {
         }, new Task.Err() {
             @Override
             public void err(Exception e) {
-                if (isFinishing()) {
+                if (isFinishing() || isDestroyed()) {
                     return;
                 }
                 saveButton.setEnabled(true);
+                if (Ui.handleAuthError(BookDetailActivity.this, e)) {
+                    return;
+                }
                 Ui.toast(BookDetailActivity.this, Ui.errorText(e));
             }
         });
     }
 
     private void onDownloadClicked() {
+        if (downloadBusy || detailLoading) {
+            return;
+        }
         if (book == null) {
             Ui.toast(this, "书籍信息加载中，请稍候");
             return;
@@ -274,6 +345,7 @@ public class BookDetailActivity extends Activity {
     }
 
     private void requestFormats() {
+        setDownloadBusy(true);
         Ui.display(progressBar, true);
         Task.run(new Task.Job<List<Format>>() {
             @Override
@@ -283,13 +355,13 @@ public class BookDetailActivity extends Activity {
         }, new Task.Ok<List<Format>>() {
             @Override
             public void ok(List<Format> result) {
-                if (isFinishing()) {
+                if (isFinishing() || isDestroyed()) {
                     return;
                 }
                 Ui.display(progressBar, false);
                 formats = result;
                 if (result == null || result.isEmpty()) {
-                    startDownload(null);
+                    confirmDefaultDownload();
                 } else {
                     showFormatDialog();
                 }
@@ -297,14 +369,48 @@ public class BookDetailActivity extends Activity {
         }, new Task.Err() {
             @Override
             public void err(Exception e) {
-                if (isFinishing()) {
+                if (isFinishing() || isDestroyed()) {
                     return;
                 }
                 Ui.display(progressBar, false);
-                Ui.toast(BookDetailActivity.this, Ui.errorText(e));
-                startDownload(null);
+                if (Ui.handleAuthError(BookDetailActivity.this, e)) {
+                    setDownloadBusy(false);
+                    return;
+                }
+                confirmDefaultDownload();
             }
         });
+    }
+
+    private void confirmDefaultDownload() {
+        if (isFinishing() || isDestroyed()) {
+            return;
+        }
+        // 未获明确确认前，不请求默认文件地址，也不加入系统下载队列。
+        downloadDialog = new AlertDialog.Builder(this)
+                .setTitle(R.string.download_default_title)
+                .setMessage(R.string.download_default_message)
+                .setPositiveButton(R.string.download_default_action,
+                        new DialogInterface.OnClickListener() {
+                            @Override
+                            public void onClick(DialogInterface dialog, int which) {
+                                startDownload(null);
+                            }
+                        })
+                .setNegativeButton(R.string.action_cancel, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        setDownloadBusy(false);
+                    }
+                })
+                .create();
+        downloadDialog.setOnCancelListener(new DialogInterface.OnCancelListener() {
+            @Override
+            public void onCancel(DialogInterface dialog) {
+                setDownloadBusy(false);
+            }
+        });
+        downloadDialog.show();
     }
 
     private void showFormatDialog() {
@@ -313,16 +419,29 @@ public class BookDetailActivity extends Activity {
         final List<String> labels = new ArrayList<String>();
         for (int i = 0; formats != null && i < formats.size(); i++) {
             Format format = formats.get(i);
-            String label = safe(format.extension).toUpperCase(Locale.US);
-            if (format.filesizeString != null && format.filesizeString.length() > 0) {
+            String label = format == null ? getString(R.string.download_format_unknown)
+                    : Ui.text(format.extension, getString(R.string.download_format_unknown)).toUpperCase(Locale.US);
+            if (format != null && format.filesizeString != null && format.filesizeString.length() > 0) {
                 label = label + "    " + format.filesizeString;
             }
             labels.add(label);
         }
         final AlertDialog dialog = new AlertDialog.Builder(this)
                 .setView(content)
-                .setNegativeButton(R.string.action_cancel, null)
+                .setNegativeButton(R.string.action_cancel, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        setDownloadBusy(false);
+                    }
+                })
                 .create();
+        downloadDialog = dialog;
+        dialog.setOnCancelListener(new DialogInterface.OnCancelListener() {
+            @Override
+            public void onCancel(DialogInterface dialog) {
+                setDownloadBusy(false);
+            }
+        });
         if (listView != null) {
             listView.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_list_item_1, labels));
             listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
@@ -331,7 +450,12 @@ public class BookDetailActivity extends Activity {
                     dialog.dismiss();
                     Format chosen = (formats != null && position >= 0 && position < formats.size())
                             ? formats.get(position) : null;
-                    startDownload(chosen);
+                    if (chosen == null || chosen.id <= 0
+                            || chosen.hash == null || chosen.hash.trim().length() == 0) {
+                        confirmDefaultDownload();
+                    } else {
+                        startDownload(chosen);
+                    }
                 }
             });
         }
@@ -339,31 +463,26 @@ public class BookDetailActivity extends Activity {
     }
 
     private void startDownload(final Format chosen) {
-        if (book == null) {
+        if (book == null || isFinishing() || isDestroyed()) {
+            setDownloadBusy(false);
             return;
         }
+        setDownloadBusy(true);
         Ui.toast(this, "正在获取下载地址…");
         Task.run(new Task.Job<DownloadInfo>() {
             @Override
             public DownloadInfo run() throws Exception {
-                if (chosen != null && chosen.hash != null && chosen.hash.length() > 0) {
-                    try {
-                        DownloadInfo detailInfo = Api.get().downloadInfo(book.id, chosen.hash);
-                        if (detailInfo != null) {
-                            return detailInfo;
-                        }
-                    } catch (Exception ignored) {
-                        // 指定格式失败则回落到 book.hash（服务端默认文件）。
-                    }
-                }
-                return Api.get().downloadInfo(book.id, book.hash);
+                // 不再吞掉指定格式异常后静默下载另一文件；鉴权异常也必须传至 UI。
+                return Api.get().downloadInfo(chosen == null ? book.id : chosen.id,
+                        chosen == null ? book.hash : chosen.hash);
             }
         }, new Task.Ok<DownloadInfo>() {
             @Override
             public void ok(DownloadInfo info) {
-                if (isFinishing()) {
+                if (isFinishing() || isDestroyed()) {
                     return;
                 }
+                setDownloadBusy(false);
                 if (info == null || info.url == null || info.url.length() == 0) {
                     Ui.toast(BookDetailActivity.this, "获取下载地址失败");
                     return;
@@ -377,7 +496,11 @@ public class BookDetailActivity extends Activity {
         }, new Task.Err() {
             @Override
             public void err(Exception e) {
-                if (isFinishing()) {
+                if (isFinishing() || isDestroyed()) {
+                    return;
+                }
+                setDownloadBusy(false);
+                if (Ui.handleAuthError(BookDetailActivity.this, e)) {
                     return;
                 }
                 Ui.toast(BookDetailActivity.this, Ui.errorText(e));
@@ -496,6 +619,15 @@ public class BookDetailActivity extends Activity {
         } else {
             Ui.toast(this, "需要存储权限才能下载文件");
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        detailRequestToken++;
+        if (downloadDialog != null && downloadDialog.isShowing()) {
+            downloadDialog.dismiss();
+        }
+        super.onDestroy();
     }
 
     private static String sanitizeFilename(String value) {

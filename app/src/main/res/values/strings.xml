@@ -162,4 +162,12 @@
     <string name="read_online_unavailable">这本书不支持在线阅读</string>
     <string name="read_online_missing">在线阅读地址缺失</string>
     <string name="reader_go_library">去书库</string>
+    <!-- Batch 1：异常恢复；不改变下载记录/网页续读等产品文案。 -->
+    <string name="mybooks_more_retry">加载更多失败，点击重试</string>
+    <string name="detail_load_failed">书籍信息加载失败，请重试。</string>
+    <string name="detail_retry">重新加载书籍信息</string>
+    <string name="download_default_title">是否尝试下载默认文件？</string>
+    <string name="download_default_message">未能获得可用的格式信息。继续将请求并下载服务器提供的默认文件，格式和大小以服务器返回为准；成功加入系统下载队列后会显示文件名。</string>
+    <string name="download_default_action">尝试默认下载</string>
+    <string name="download_format_unknown">格式未知</string>
 </resources>
